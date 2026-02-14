@@ -204,7 +204,7 @@ Cloakbot units (from factorycloak):
 Defense:
 - \`turretlaser\` — Lotus (light laser turret)
 - \`turretmissile\` — Picket (light AA turret)
-- \`turretheavylaser\` — Stardust (medium laser turret)
+- \`turretheavylaser\` — Stinger (medium laser turret)
 
 **Opening pattern** (your first factory is FREE and instant via "facplop"):
 1. Place \`factorycloak\` near your commander — use the commander's position from its unit_finished event as x/z. Example: \`{"type":"build","unit_id":CMD_ID,"build_def_name":"factorycloak","x":CMD_X,"z":CMD_Z,"queue":false}\`. It's placed instantly at no cost!
@@ -214,7 +214,7 @@ Defense:
 5. Expand to more metal spots with constructors
 6. Scout the enemy with raiders, attack when you have an advantage
 
-Map coordinates: x and z are horizontal (map plane), y is height (usually 0 for ground level).
+Map coordinates: x and z are horizontal (map plane), y is height. [0,0,0] is the north-west corner at water level.
 
 ## Sleep/Wake Pattern
 
