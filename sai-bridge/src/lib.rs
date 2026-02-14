@@ -102,7 +102,7 @@ fn select_commander_and_start_pos(cb: &EngineCallbacks) {
 
     // 6. Send start position
     let mut pos = [ox, 0.0, oz];
-    cb.send_start_position(false, &mut pos);
+    cb.send_start_position(true, &mut pos);
     cb.log(&format!(
         "[SAI Bridge] Start position: ({:.0}, {:.0}) near metal spot ({:.0}, {:.0})",
         ox, oz, sx, sz
