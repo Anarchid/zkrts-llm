@@ -22,6 +22,93 @@ struct AiInstance {
     frame_counter: u32,
 }
 
+/// Select commander type and pick a start position near the best metal spot.
+/// Matches the algorithm used by both zkgbai (Java) and cpp-zkgbai.
+fn select_commander_and_start_pos(cb: &EngineCallbacks) {
+    // 1. Select commander via Lua rules gadget
+    let commander = "dyntrainer_strike_base";
+    cb.call_lua_rules(&format!("ai_commander:{}", commander));
+    cb.log(&format!("[SAI Bridge] Selected commander: {}", commander));
+
+    // 2. Query metal spots
+    let all_spots = cb.get_metal_spots();
+    if all_spots.is_empty() {
+        cb.log("[SAI Bridge] No metal spots found, skipping start position");
+        return;
+    }
+
+    // 3. Filter to spots within our startbox (ai_is_valid_startpos gadget check).
+    //    If no startbox is defined (e.g. local games), all spots pass.
+    let valid_spots: Vec<(f32, f32, f32, f32)> = all_spots
+        .iter()
+        .copied()
+        .filter(|&(x, _, z, _)| {
+            let query = format!("ai_is_valid_startpos:{}/{}", x, z);
+            cb.call_lua_rules(&query).as_deref() == Some("1")
+        })
+        .collect();
+
+    let spots = if valid_spots.is_empty() {
+        cb.log("[SAI Bridge] No spots in startbox (or no startbox), using all spots");
+        &all_spots
+    } else {
+        cb.log(&format!(
+            "[SAI Bridge] {} of {} metal spots in startbox",
+            valid_spots.len(),
+            all_spots.len()
+        ));
+        &valid_spots
+    };
+
+    // 4. Map center: Map_getWidth/Height returns heightmap squares,
+    //    world coords = squares * 8, center = squares * 4.
+    let center_x = cb.map_width() as f32 * 4.0;
+    let center_z = cb.map_height() as f32 * 4.0;
+
+    // 5. Score each spot: dist_to_center + min_dist_to_nearest_neighbor.
+    //    Lowest score = good central position near other mexes.
+    let mut best_idx = 0;
+    let mut best_score = f32::MAX;
+    for (i, &(x, _, z, _)) in spots.iter().enumerate() {
+        let dist_center = ((x - center_x).powi(2) + (z - center_z).powi(2)).sqrt();
+        let mut min_neighbor = f32::MAX;
+        for (j, &(ox, _, oz, _)) in spots.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let d = ((x - ox).powi(2) + (z - oz).powi(2)).sqrt();
+            if d < min_neighbor {
+                min_neighbor = d;
+            }
+        }
+        let score = dist_center + if min_neighbor < f32::MAX { min_neighbor } else { 0.0 };
+        if score < best_score {
+            best_score = score;
+            best_idx = i;
+        }
+    }
+
+    let (sx, _, sz, _) = spots[best_idx];
+
+    // 5. Offset 75 units toward map center (so commander isn't on the mex)
+    let dx = center_x - sx;
+    let dz = center_z - sz;
+    let dist = (dx * dx + dz * dz).sqrt();
+    let (ox, oz) = if dist > 0.0 {
+        (sx + (dx / dist) * 75.0, sz + (dz / dist) * 75.0)
+    } else {
+        (sx, sz)
+    };
+
+    // 6. Send start position
+    let mut pos = [ox, 0.0, oz];
+    cb.send_start_position(false, &mut pos);
+    cb.log(&format!(
+        "[SAI Bridge] Start position: ({:.0}, {:.0}) near metal spot ({:.0}, {:.0})",
+        ox, oz, sx, sz
+    ));
+}
+
 /// Global AI instance storage. Recoil supports up to 255 AIs,
 /// but we typically only have one.
 static INSTANCES: Mutex<Vec<Option<AiInstance>>> = Mutex::new(Vec::new());
@@ -74,7 +161,10 @@ pub unsafe extern "C" fn init(
     callback: *const SSkirmishAICallback,
 ) -> c_int {
     let cb = unsafe { EngineCallbacks::new(skirmish_ai_id, callback) };
-    cb.log("[SAI Bridge] Initializing... (v2 — enrichment + name commands)");
+    cb.log("[SAI Bridge] Initializing... (v3 — auto commander + start pos)");
+
+    // Select commander and start position before game starts
+    select_commander_and_start_pos(&cb);
 
     // Connect to GameManager
     let socket_path = get_socket_path(&cb);

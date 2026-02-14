@@ -39,7 +39,7 @@ const config = {
   provider: (process.env.PROVIDER || 'anthropic') as 'anthropic' | 'haiku' | 'groq',
   gmBin: process.env.GAME_MANAGER_BIN || resolve(__dirname, '../../game-manager/target/release/game-manager'),
   writeDir: process.env.WRITE_DIR || resolve(homedir(), '.spring-loom'),
-  map: process.env.MAP || 'Fairyland v1.0',
+  map: process.env.MAP || 'TitanDuel 2.2',
   opponent: process.env.OPPONENT || 'NullAI',
   storePath: process.env.STORE_PATH || './data/store',
   playMode: (process.env.PLAY_MODE || 'local') as 'local' | 'lobby',

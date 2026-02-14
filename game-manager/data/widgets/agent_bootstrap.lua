@@ -36,11 +36,10 @@ function widget:Initialize()
     Spring.Echo("[AgentBootstrap] Config loaded OK")
 end
 
-function widget:GameStart()
-    Spring.Echo("[AgentBootstrap] GameStart()")
+local function doAiControl()
     if not config then
-        Spring.Echo("[AgentBootstrap] No config, returning")
-        return
+        Spring.Echo("[AgentBootstrap] No config")
+        return false
     end
 
     local myPlayerID = Spring.GetMyPlayerID()
@@ -56,7 +55,26 @@ function widget:GameStart()
         local cmd = "aicontrol " .. tostring(teamID) .. " " .. ai .. " " .. version
         Spring.Echo("[AgentBootstrap] Sending: " .. cmd)
         Spring.SendCommands(cmd)
+        return true
     else
         Spring.Echo("[AgentBootstrap] No entry for player '" .. tostring(myName) .. "'")
+        return false
+    end
+end
+
+local aiControlDone = false
+
+-- Try early: GamePreload fires after loading but before game start,
+-- giving the AI's init() time to set commander and start position.
+function widget:GamePreload()
+    Spring.Echo("[AgentBootstrap] GamePreload()")
+    aiControlDone = doAiControl()
+end
+
+-- Fallback: if GamePreload didn't work, try again at GameStart.
+function widget:GameStart()
+    if not aiControlDone then
+        Spring.Echo("[AgentBootstrap] GameStart() — fallback")
+        doAiControl()
     end
 end

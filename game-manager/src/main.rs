@@ -84,6 +84,14 @@ impl GameManager {
         &mut self,
         params: &serde_json::Value,
     ) -> serde_json::Value {
+        // Guard: don't open a new game channel if one already exists
+        if !self.engines.instances.is_empty() {
+            let channels: Vec<&str> = self.engines.instances.keys().map(|s| s.as_str()).collect();
+            return serde_json::json!({
+                "error": { "code": -32000, "message": format!("Game already running (channels: {}). Close existing game first.", channels.join(", ")) }
+            });
+        }
+
         let map = params
             .get("address")
             .and_then(|a| a.get("map"))
@@ -368,6 +376,18 @@ impl GameManager {
     // ── Lobby tool implementations (unchanged) ──
 
     async fn tool_lobby_connect(&mut self, args: &serde_json::Value) -> serde_json::Value {
+        // Idempotent: if already connected, return success
+        if self.lobby_conn.is_some() {
+            let status = if self.lobby_state.logged_in {
+                format!("Already connected and logged in as '{}'", self.lobby_state.my_username.as_deref().unwrap_or("?"))
+            } else {
+                "Already connected (not yet logged in)".to_string()
+            };
+            return serde_json::json!({
+                "content": [{"type": "text", "text": status}]
+            });
+        }
+
         let host = args
             .get("host")
             .and_then(|v| v.as_str())
@@ -439,6 +459,13 @@ impl GameManager {
     }
 
     async fn tool_lobby_login(&mut self, args: &serde_json::Value) -> serde_json::Value {
+        // Idempotent: if already logged in, return success
+        if self.lobby_state.logged_in {
+            return serde_json::json!({
+                "content": [{"type": "text", "text": format!("Already logged in as '{}'", self.lobby_state.my_username.as_deref().unwrap_or("?"))}]
+            });
+        }
+
         let username = match args.get("username").and_then(|v| v.as_str()) {
             Some(u) => u.to_string(),
             None => {
@@ -1121,6 +1148,13 @@ impl GameManager {
         &mut self,
         args: &serde_json::Value,
     ) -> serde_json::Value {
+        // Idempotent: if already in a battle, return info about it
+        if let Some(battle_id) = self.lobby_state.my_battle {
+            return serde_json::json!({
+                "content": [{"type": "text", "text": format!("Already in battle {}. Use lobby_leave_battle first to leave, or lobby_start_battle to start it.", battle_id)}]
+            });
+        }
+
         let title = match args.get("title").and_then(|v| v.as_str()) {
             Some(t) => t.to_string(),
             None => {
@@ -1307,6 +1341,14 @@ impl GameManager {
             });
         }
 
+        // Guard: don't send !start if a game engine is already running
+        if !self.engines.instances.is_empty() {
+            let channels: Vec<&str> = self.engines.instances.keys().map(|s| s.as_str()).collect();
+            return serde_json::json!({
+                "content": [{"type": "text", "text": format!("Game already running (channels: {}). The battle has already started.", channels.join(", "))}]
+            });
+        }
+
         // ZK custom battles are started by sending !start in battle chat.
         // The ZKLS autohost processes it and spins up a dedicated game server.
         let cmd = SayCommand {
@@ -1340,6 +1382,15 @@ impl GameManager {
         &mut self,
         args: &serde_json::Value,
     ) -> serde_json::Value {
+        // Guard: don't start a new game if one is already running
+        if !self.engines.instances.is_empty() {
+            let channels: Vec<&str> = self.engines.instances.keys().map(|s| s.as_str()).collect();
+            return serde_json::json!({
+                "content": [{"type": "text", "text": format!("A game is already running (channels: {}). Close it first with channels/close before starting a new one.", channels.join(", "))}],
+                "isError": true
+            });
+        }
+
         let map = match args.get("map").and_then(|v| v.as_str()) {
             Some(m) => m.to_string(),
             None => {
