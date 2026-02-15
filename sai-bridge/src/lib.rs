@@ -170,7 +170,7 @@ pub unsafe extern "C" fn init(
 
     // Connect to GameManager
     let socket_path = get_socket_path(&cb);
-    let ipc = match IpcClient::connect(&socket_path) {
+    let mut ipc = match IpcClient::connect(&socket_path) {
         Ok(client) => {
             cb.log(&format!(
                 "[SAI Bridge] Connected to GameManager at {}",
@@ -200,6 +200,49 @@ pub unsafe extern "C" fn init(
         }
         host
     });
+
+    // Announce to LuaUI widget that SAI bridge is ready.
+    // The widget returns a hello_ack with any pending tool registrations
+    // (SendSkirmishAIMessage doesn't work inside RecvSkirmishAIMessage due to re-entrancy,
+    // so the widget piggybacks registrations on the hello response).
+    let my_team = cb.get_my_team();
+    let hello = format!(r#"{{"op":"hello","teamID":{}}}"#, my_team);
+    if let Some(response) = cb.call_lua_ui(&hello) {
+        cb.log(&format!("[SAI Bridge] Hello response: {}", &response[..response.len().min(200)]));
+        // Parse hello_ack and forward tool registrations to GM
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&response) {
+            if parsed.get("op").and_then(|v| v.as_str()) == Some("hello_ack") {
+                if let Some(regs) = parsed.get("registrations").and_then(|v| v.as_array()) {
+                    for reg in regs {
+                        let source = reg.get("source")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let tools: Vec<events::ToolDef> = reg.get("tools")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|t| {
+                                Some(events::ToolDef {
+                                    name: t.get("name")?.as_str()?.to_string(),
+                                    description: t.get("description")?.as_str()?.to_string(),
+                                    input_schema: t.get("inputSchema").cloned()
+                                        .unwrap_or(serde_json::json!({"type": "object"})),
+                                })
+                            }).collect())
+                            .unwrap_or_default();
+                        if !tools.is_empty() {
+                            cb.log(&format!("[SAI Bridge] Forwarding {} tools from {} to GM", tools.len(), source));
+                            if let Some(ref mut ipc_conn) = ipc {
+                                let event = GameEvent::ToolsRegistered { tools, source };
+                                let _ = ipc_conn.send_event(&event);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        cb.log("[SAI Bridge] No hello response from LuaUI (widget may not be loaded)");
+    }
 
     let instance = AiInstance {
         callbacks: cb,
@@ -410,6 +453,10 @@ pub unsafe extern "C" fn handleEvent(
 
     // Parse, enrich with unit names, and forward the event
     if let Some(mut event) = unsafe { parse_event(topic, data) } {
+        // Log tool registration events for debugging
+        if matches!(event, GameEvent::ToolsRegistered { .. }) {
+            instance.callbacks.log("[SAI Bridge] Forwarding ToolsRegistered to GM");
+        }
         enrich_event(&mut event, &instance.callbacks);
         if let Some(ref mut ipc) = instance.ipc {
             if let Err(e) = ipc.send_event(&event) {

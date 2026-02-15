@@ -6,9 +6,10 @@ Tiers:
   1. Engine launch — verify infolog.txt creation
   2. SAI boot — verify Init and Update events from SAI bridge
   3. Command round-trip — send a command, observe unit events
+  4. Widget tools — verify dynamic tool registration and invocation
 
 Usage:
-  python3 tests/integration_test.py [--tier 1|2|3] [--map MAP] [--game GAME] [--verbose]
+  python3 tests/integration_test.py [--tier 1|2|3|4] [--map MAP] [--game GAME] [--verbose]
 """
 
 import argparse
@@ -103,6 +104,8 @@ class IntegrationTest:
                 self._tier2_sai_boot()
             if self.tier >= 3:
                 self._tier3_command_roundtrip()
+            if self.tier >= 4:
+                self._tier4_widget_tools()
 
         except Exception as e:
             self.failed += 1
@@ -251,6 +254,114 @@ class IntegrationTest:
         # Report total event counts
         self.log("INFO", f"Total: {len(self.client.sai_events)} SAI events ({len(sai_events)} new in tier 3)")
 
+    def _tier4_widget_tools(self):
+        print("\n--- Tier 4: Widget Tool Registration & Invocation ---")
+
+        if not self.channel_id:
+            self.check(False, "No channel_id, skipping")
+            return
+
+        # 1. Wait for tools/list_changed notification (widgets registering tools)
+        notif = self.client.wait_for_notification(
+            "notifications/tools/list_changed", timeout=self.timeout
+        )
+        self.check(notif is not None, "Received tools/list_changed notification")
+
+        # 2. List tools and verify dynamic widget tools appear
+        try:
+            tools_result = self.client.list_tools()
+            tool_names = [t.get("name", "") for t in tools_result.get("tools", [])]
+
+            # Check for expected widget tools
+            expected_tools = [
+                "economy:snapshot",
+                "roster:own",
+                "intel:known_enemies",
+                "threat:sectors",
+                "squad:list",
+            ]
+            found_tools = [t for t in expected_tools if t in tool_names]
+            missing_tools = [t for t in expected_tools if t not in tool_names]
+
+            if found_tools:
+                self.check(True, f"Dynamic tools registered: {', '.join(found_tools)}")
+            else:
+                self.check(False, f"No dynamic tools found in tools/list ({len(tool_names)} total tools)")
+
+            if missing_tools:
+                self.warn(f"Missing expected tools: {', '.join(missing_tools)}")
+
+            if self.verbose:
+                for name in tool_names:
+                    prefix = "  *" if name in expected_tools else "   "
+                    print(f"    |{prefix} {name}")
+        except Exception as e:
+            self.check(False, f"tools/list failed: {e}")
+            return
+
+        # 3. Call economy:snapshot — should return real game data
+        try:
+            result = self.client.call_tool("economy:snapshot", {})
+            is_error = result.get("isError", False)
+            content = result.get("content", [])
+            text = content[0].get("text", "") if content else ""
+
+            if is_error:
+                self.check(False, f"economy:snapshot returned error: {text}")
+            else:
+                # Should contain metal/energy data
+                import json as json_mod
+                try:
+                    data = json_mod.loads(text)
+                    has_metal = "metal" in data
+                    has_energy = "energy" in data
+                    self.check(
+                        has_metal and has_energy,
+                        f"economy:snapshot returned valid data (metal income: {data.get('metal', {}).get('income', '?')})"
+                    )
+                except (json_mod.JSONDecodeError, TypeError):
+                    self.check(False, f"economy:snapshot returned non-JSON: {text[:100]}")
+        except TimeoutError:
+            self.check(False, "economy:snapshot timed out (5s tool timeout?)")
+        except Exception as e:
+            self.check(False, f"economy:snapshot call failed: {e}")
+
+        # 4. Call roster:own — should return unit groups
+        try:
+            result = self.client.call_tool("roster:own", {})
+            is_error = result.get("isError", False)
+            content = result.get("content", [])
+            text = content[0].get("text", "") if content else ""
+
+            if is_error:
+                self.check(False, f"roster:own returned error: {text}")
+            else:
+                import json as json_mod
+                try:
+                    data = json_mod.loads(text)
+                    total = data.get("total", 0)
+                    self.check(total > 0, f"roster:own shows {total} own units")
+                except (json_mod.JSONDecodeError, TypeError):
+                    self.check(False, f"roster:own returned non-JSON: {text[:100]}")
+        except TimeoutError:
+            self.check(False, "roster:own timed out")
+        except Exception as e:
+            self.check(False, f"roster:own call failed: {e}")
+
+        # 5. Call squad:list — should return empty squads (none created yet)
+        try:
+            result = self.client.call_tool("squad:list", {})
+            is_error = result.get("isError", False)
+            content = result.get("content", [])
+            text = content[0].get("text", "") if content else ""
+
+            if not is_error and "squads" in text:
+                self.check(True, "squad:list returned valid response")
+            else:
+                self.check(False, f"squad:list unexpected response: {text[:100]}")
+        except Exception as e:
+            self.check(False, f"squad:list call failed: {e}")
+
     def _cleanup(self):
         print("\n--- Cleanup ---")
         if self.client:
@@ -284,8 +395,8 @@ class IntegrationTest:
 
 def main():
     parser = argparse.ArgumentParser(description="Game-manager integration test")
-    parser.add_argument("--tier", type=int, default=3, choices=[1, 2, 3],
-                        help="Test tier (1=launch, 2=SAI boot, 3=commands)")
+    parser.add_argument("--tier", type=int, default=3, choices=[1, 2, 3, 4],
+                        help="Test tier (1=launch, 2=SAI boot, 3=commands, 4=widget tools)")
     parser.add_argument("--map", default="SimpleChess",
                         help="Map name for the test game")
     parser.add_argument("--game", default="Zero-K $VERSION",

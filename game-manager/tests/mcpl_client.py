@@ -243,6 +243,17 @@ class McplStdioClient:
             time.sleep(0.5)
         return None
 
+    def wait_for_notification(self, method: str, timeout: float = 30.0) -> Optional[dict]:
+        """Wait until a notification with the given method name appears."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for notif in self.notifications:
+                notif_method = notif.get("method", "")
+                if notif_method == method:
+                    return notif
+            time.sleep(0.5)
+        return None
+
     def close(self):
         """Stop the subprocess and all its children.
 

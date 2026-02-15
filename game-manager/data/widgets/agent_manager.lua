@@ -17,7 +17,7 @@ function widget:GetInfo()
         version = "0.1",
         date    = "2026",
         license = "MIT",
-        layer   = -1,  -- load before child widgets
+        layer   = 0,  -- same as bootstrap; Initialize runs before children (layer 1)
         enabled = true,
     }
 end
@@ -28,6 +28,7 @@ WG.AgentTools = WG.AgentTools or {}
 -- Internal state
 local handlers = {}     -- tool_name -> { handler=fn, source=string }
 local aiTeamID = nil    -- the AI team we communicate with
+local pendingRegistrations = {}  -- queued register messages from before aiTeamID was found
 
 --------------------------------------------------------------------------------
 -- JSON helpers (use Spring's built-in or a minimal fallback)
@@ -123,14 +124,12 @@ function WG.AgentTools.Register(source, tools, handler)
         Spring.Echo("[AgentManager] Registered tool: " .. tool.name .. " (from " .. source .. ")")
     end
 
-    -- Notify the SAI bridge about new tools
+    -- Notify the SAI bridge about new tools (or queue if AI not found yet)
+    local regMsg = { op = "register", source = source, tools = toolDefs }
     if aiTeamID then
-        local msg = JSON.encode({
-            op = "register",
-            source = source,
-            tools = toolDefs,
-        })
-        Spring.SendSkirmishAIMessage(aiTeamID, msg)
+        Spring.SendSkirmishAIMessage(aiTeamID, JSON.encode(regMsg))
+    else
+        pendingRegistrations[#pendingRegistrations + 1] = regMsg
     end
 end
 
@@ -161,39 +160,17 @@ end
 
 function widget:Initialize()
     initJSON()
-    Spring.Echo("[AgentManager] Initialized")
+    Spring.Echo("[AgentManager] Initialized — waiting for SAI hello")
 end
 
---- Find the AgentBridge AI team ID.
-local function findAiTeam()
-    local teams = Spring.GetTeamList()
-    for _, teamID in ipairs(teams) do
-        local _, leader, isDead, isAI, side, allyTeam, _, shortName = Spring.GetTeamInfo(teamID)
-        if isAI and shortName and shortName:find("AgentBridge") then
-            return teamID
-        end
+--- Flush any tool registrations queued before aiTeamID was known.
+local function flushPendingRegistrations()
+    if not aiTeamID or #pendingRegistrations == 0 then return end
+    Spring.Echo("[AgentManager] Flushing " .. #pendingRegistrations .. " pending registrations")
+    for _, regMsg in ipairs(pendingRegistrations) do
+        Spring.SendSkirmishAIMessage(aiTeamID, JSON.encode(regMsg))
     end
-    return nil
-end
-
-function widget:GamePreload()
-    aiTeamID = findAiTeam()
-    if aiTeamID then
-        Spring.Echo("[AgentManager] Found AgentBridge AI team: " .. tostring(aiTeamID))
-    else
-        Spring.Echo("[AgentManager] AgentBridge AI not found yet (will retry at GameStart)")
-    end
-end
-
-function widget:GameStart()
-    if not aiTeamID then
-        aiTeamID = findAiTeam()
-        if aiTeamID then
-            Spring.Echo("[AgentManager] Found AgentBridge AI team at GameStart: " .. tostring(aiTeamID))
-        else
-            Spring.Echo("[AgentManager] WARNING: AgentBridge AI team not found")
-        end
-    end
+    pendingRegistrations = {}
 end
 
 --------------------------------------------------------------------------------
@@ -212,7 +189,22 @@ function widget:RecvSkirmishAIMessage(aiTeam, dataStr)
 
     local op = msg.op
 
-    if op == "call" then
+    if op == "hello" then
+        -- SAI bridge announcing itself — store its team ID
+        aiTeamID = aiTeam
+        Spring.Echo("[AgentManager] SAI bridge hello received (teamID=" .. tostring(aiTeamID) .. ")")
+
+        -- Return all pending tool registrations in the response.
+        -- SendSkirmishAIMessage doesn't work inside RecvSkirmishAIMessage (re-entrancy),
+        -- so we piggyback registrations on the hello response instead.
+        local regs = pendingRegistrations
+        pendingRegistrations = {}
+        Spring.Echo("[AgentManager] Returning " .. #regs .. " pending registrations in hello response")
+        return JSON.encode({
+            op = "hello_ack",
+            registrations = regs,
+        })
+    elseif op == "call" then
         local call_id = msg.call_id or ""
         local toolName = msg.tool or ""
         local args = msg.args or {}

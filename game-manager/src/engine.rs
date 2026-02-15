@@ -165,6 +165,20 @@ impl EngineInstance {
             .map_err(|e| format!("Failed to write script.txt: {}", e))?;
 
         let engine_bin = resolve_engine_binary(&self.config.engine_dir, self.config.headless);
+
+        // Ensure binary is executable (downloaded engines may lack +x)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = std::fs::metadata(&engine_bin) {
+                let mut perms = meta.permissions();
+                if perms.mode() & 0o111 == 0 {
+                    perms.set_mode(perms.mode() | 0o111);
+                    let _ = std::fs::set_permissions(&engine_bin, perms);
+                }
+            }
+        }
+
         tracing::info!(
             "Launching engine: {} --write-dir {} {}",
             engine_bin.display(),
