@@ -2,6 +2,7 @@ mod engine;
 mod lobby;
 mod mcpl_server;
 mod sai_ipc;
+mod tool_registry;
 mod write_dir;
 
 use engine::EngineManager;
@@ -10,6 +11,7 @@ use mcpl_core::connection::IncomingMessage as McplIncoming;
 use mcpl_core::methods::*;
 use mcpl_core::types::*;
 use sai_ipc::SaiIpcServer;
+use tool_registry::ToolRegistry;
 use write_dir::WriteDirConfig;
 
 use std::path::PathBuf;
@@ -21,6 +23,7 @@ struct GameManager {
     lobby_state: LobbyState,
     engines: EngineManager,
     sai: SaiIpcServer,
+    tool_registry: ToolRegistry,
     write_dir: PathBuf,
     spring_home: PathBuf,
     agent_name: String,
@@ -38,6 +41,7 @@ impl GameManager {
                 socket_dir,
             ),
             sai: SaiIpcServer::new(),
+            tool_registry: ToolRegistry::new(),
             write_dir: write_dir_config.write_dir.clone(),
             spring_home: write_dir_config.spring_home.clone(),
             agent_name: write_dir_config.agent_name.clone(),
@@ -189,6 +193,15 @@ impl GameManager {
         };
 
         self.sai.close_channel(&channel_id);
+        let removed_tools = self.tool_registry.remove_channel(&channel_id);
+        if !removed_tools.is_empty() {
+            if let Some(mcpl) = &mut self.mcpl {
+                let _ = mcpl.send_notification(
+                    "notifications/tools/list_changed",
+                    None,
+                ).await;
+            }
+        }
         if let Err(e) = self.engines.stop_game(&channel_id).await {
             return serde_json::json!({
                 "closed": false,
@@ -1898,17 +1911,51 @@ async fn main() -> anyhow::Result<()> {
                             McplIncoming::Request(req) => {
                                 let result = match req.method.as_str() {
                                     "tools/list" => {
-                                        mcpl_server::lobby_tools()
+                                        let mut result = mcpl_server::lobby_tools();
+                                        // Merge dynamic tools from widget/plugin registry
+                                        if gm.tool_registry.has_tools() {
+                                            if let Some(tools_arr) = result.get_mut("tools").and_then(|v| v.as_array_mut()) {
+                                                tools_arr.extend(gm.tool_registry.list_tools());
+                                            }
+                                        }
+                                        result
                                     }
                                     "tools/call" => {
                                         let params = req.params.unwrap_or_default();
                                         let tool_name = params.get("name")
                                             .and_then(|v| v.as_str())
-                                            .unwrap_or("");
+                                            .unwrap_or("")
+                                            .to_string();
                                         let tool_args = params.get("arguments")
                                             .cloned()
                                             .unwrap_or(serde_json::json!({}));
-                                        gm.handle_tool_call(tool_name, &tool_args).await
+
+                                        // Check if this is a dynamic tool (widget/plugin)
+                                        if let Some(channel_id) = gm.tool_registry.resolve_tool(&tool_name).map(String::from) {
+                                            let call_id = uuid::Uuid::new_v4().to_string();
+                                            let cmd = sai_ipc::SaiCommand::ToolCall {
+                                                call_id: call_id.clone(),
+                                                tool: tool_name.clone(),
+                                                args: tool_args,
+                                            };
+                                            match gm.sai.send_to(&channel_id, &cmd).await {
+                                                Ok(()) => {
+                                                    // Defer the response — track the pending call
+                                                    gm.tool_registry.track_call(call_id.clone(), req.id.clone());
+                                                    tracing::debug!("Deferred tool call {} -> channel {}", call_id, channel_id);
+                                                    continue; // Skip sending response now
+                                                }
+                                                Err(e) => {
+                                                    serde_json::json!({
+                                                        "content": [{"type": "text", "text": format!("Failed to route tool call: {}", e)}],
+                                                        "isError": true
+                                                    })
+                                                }
+                                            }
+                                        } else {
+                                            // Built-in lobby tool
+                                            gm.handle_tool_call(&tool_name, &tool_args).await
+                                        }
                                     }
                                     "channels/open" => {
                                         let params = req.params.unwrap_or_default();
@@ -1989,11 +2036,36 @@ async fn main() -> anyhow::Result<()> {
                 for (channel_id, status) in &changed {
                     tracing::warn!("Engine {} status changed: {:?}", channel_id, status);
                     gm.sai.close_channel(channel_id);
+                    let removed_tools = gm.tool_registry.remove_channel(channel_id);
+                    if !removed_tools.is_empty() {
+                        tracing::info!("Removed {} tools from closed channel {}", removed_tools.len(), channel_id);
+                        if let Some(mcpl) = &mut gm.mcpl {
+                            let _ = mcpl.send_notification(
+                                "notifications/tools/list_changed",
+                                None,
+                            ).await;
+                        }
+                    }
                     gm.send_channels_changed(
                         vec![],
                         vec![channel_id.clone()],
                         vec![],
                     ).await;
+                }
+
+                // Timeout pending tool calls (5 second timeout)
+                let timed_out = gm.tool_registry.collect_timed_out(
+                    std::time::Duration::from_secs(5)
+                );
+                for (call_id, mcpl_req_id) in timed_out {
+                    tracing::warn!("Tool call {} timed out", call_id);
+                    let result = serde_json::json!({
+                        "content": [{"type": "text", "text": "Tool call timed out (5s)"}],
+                        "isError": true,
+                    });
+                    if let Some(mcpl) = &mut gm.mcpl {
+                        let _ = mcpl.send_response(mcpl_req_id, result).await;
+                    }
                 }
 
                 // Read events from connected SAIs
@@ -2021,11 +2093,69 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
 
-                    // Forward events (skip Update ticks — noise for the LLM)
+                    // Process events
                     for event in &events {
+                        // Skip Update ticks — noise for the LLM
                         if matches!(event, sai_ipc::SaiEvent::Update { .. }) {
                             continue;
                         }
+
+                        // Handle dynamic tool registration
+                        match event {
+                            sai_ipc::SaiEvent::ToolsRegistered { tools, source } => {
+                                let tool_defs: Vec<sai_ipc::ToolDefinition> = tools.iter().map(|t| {
+                                    sai_ipc::ToolDefinition {
+                                        name: t.name.clone(),
+                                        description: t.description.clone(),
+                                        input_schema: t.input_schema.clone(),
+                                    }
+                                }).collect();
+                                let registered = gm.tool_registry.register(&channel_id, tool_defs);
+                                tracing::info!(
+                                    "Registered {} tools from {} (source: {}): {:?}",
+                                    registered.len(), channel_id, source, registered
+                                );
+                                // Send tools/list_changed notification
+                                if let Some(mcpl) = &mut gm.mcpl {
+                                    let _ = mcpl.send_notification(
+                                        "notifications/tools/list_changed",
+                                        None,
+                                    ).await;
+                                }
+                                continue; // Don't forward registration events to the agent
+                            }
+                            sai_ipc::SaiEvent::ToolsUnregistered { tool_names } => {
+                                let removed = gm.tool_registry.unregister(tool_names);
+                                if !removed.is_empty() {
+                                    tracing::info!("Unregistered tools: {:?}", removed);
+                                    if let Some(mcpl) = &mut gm.mcpl {
+                                        let _ = mcpl.send_notification(
+                                            "notifications/tools/list_changed",
+                                            None,
+                                        ).await;
+                                    }
+                                }
+                                continue;
+                            }
+                            sai_ipc::SaiEvent::ToolResult { call_id, content, is_error } => {
+                                if let Some(mcpl_req_id) = gm.tool_registry.complete_call(call_id) {
+                                    let result = serde_json::json!({
+                                        "content": content,
+                                        "isError": is_error,
+                                    });
+                                    if let Some(mcpl) = &mut gm.mcpl {
+                                        if let Err(e) = mcpl.send_response(mcpl_req_id, result).await {
+                                            tracing::error!("Failed to send deferred tool response: {}", e);
+                                        }
+                                    }
+                                } else {
+                                    tracing::warn!("Tool result for unknown call_id: {}", call_id);
+                                }
+                                continue;
+                            }
+                            _ => {}
+                        }
+
                         gm.forward_sai_event(&channel_id, event).await;
                     }
                 }

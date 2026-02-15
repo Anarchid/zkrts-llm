@@ -279,6 +279,29 @@ impl EngineCallbacks {
         if s.is_empty() { None } else { Some(s) }
     }
 
+    // ── Lua UI ──
+
+    /// Call a LuaUI widget and return the response string (if any).
+    /// Uses COMMAND_CALL_LUA_UI which triggers widget:RecvSkirmishAIMessage().
+    pub fn call_lua_ui(&self, data: &str) -> Option<String> {
+        let c_data = CString::new(data).ok()?;
+        const MAX_RESPONSE_SIZE: usize = 10240;
+        let mut response = vec![0u8; MAX_RESPONSE_SIZE];
+        let mut cmd = SCallLuaUICommand {
+            in_data: c_data.as_ptr(),
+            in_size: -1,
+            ret_out_data: response.as_mut_ptr() as *mut c_char,
+        };
+        self.handle_command(
+            COMMAND_CALL_LUA_UI,
+            &mut cmd as *mut _ as *mut c_void,
+        );
+        let s = unsafe { CStr::from_ptr(response.as_ptr() as *const c_char) }
+            .to_string_lossy()
+            .into_owned();
+        if s.is_empty() { None } else { Some(s) }
+    }
+
     // ── Start position ──
 
     /// Send the AI's preferred start position (pre-game).
@@ -302,6 +325,7 @@ pub const COMMAND_TO_ID_ENGINE: c_int = -1;
 pub const COMMAND_SEND_START_POS: c_int = 4;
 pub const COMMAND_SEND_TEXT_MESSAGE: c_int = 6;
 pub const COMMAND_CALL_LUA_RULES: c_int = 21;
+pub const COMMAND_CALL_LUA_UI: c_int = 96;
 pub const COMMAND_PAUSE: c_int = 81;
 pub const COMMAND_UNIT_BUILD: c_int = 35;
 pub const COMMAND_UNIT_STOP: c_int = 36;
@@ -428,6 +452,15 @@ pub struct SPauseCommand {
 
 #[repr(C)]
 pub struct SCallLuaRulesCommand {
+    pub in_data: *const c_char,
+    /// If < 0, the engine uses strlen(in_data).
+    pub in_size: c_int,
+    /// Response buffer — must be MAX_RESPONSE_SIZE (10240) bytes.
+    pub ret_out_data: *mut c_char,
+}
+
+#[repr(C)]
+pub struct SCallLuaUICommand {
     pub in_data: *const c_char,
     /// If < 0, the engine uses strlen(in_data).
     pub in_size: c_int,

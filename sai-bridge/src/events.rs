@@ -379,6 +379,34 @@ pub enum GameEvent {
 
     #[serde(rename = "command_error")]
     CommandError { error: String, command: String },
+
+    #[serde(rename = "tools_registered")]
+    ToolsRegistered {
+        tools: Vec<ToolDef>,
+        source: String,
+    },
+
+    #[serde(rename = "tools_unregistered")]
+    ToolsUnregistered {
+        tool_names: Vec<String>,
+    },
+
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        call_id: String,
+        content: Vec<serde_json::Value>,
+        #[serde(default)]
+        is_error: bool,
+    },
+}
+
+/// Tool definition as received from widgets/plugins.
+#[derive(Debug, Serialize)]
+pub struct ToolDef {
+    pub name: String,
+    pub description: String,
+    #[serde(rename = "inputSchema")]
+    pub input_schema: serde_json::Value,
 }
 
 /// Convert a raw C event (topic + data pointer) into a serializable GameEvent.
@@ -548,6 +576,55 @@ pub unsafe fn parse_event(topic: c_int, data: *const c_void) -> Option<GameEvent
             } else {
                 CStr::from_ptr(e.in_data).to_string_lossy().into_owned()
             };
+
+            // Try to parse as widget protocol message
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_str) {
+                match parsed.get("op").and_then(|v| v.as_str()) {
+                    Some("register") => {
+                        let source = parsed.get("source")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let tools: Vec<ToolDef> = parsed.get("tools")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|t| {
+                                Some(ToolDef {
+                                    name: t.get("name")?.as_str()?.to_string(),
+                                    description: t.get("description")?.as_str()?.to_string(),
+                                    input_schema: t.get("inputSchema").cloned()
+                                        .unwrap_or(serde_json::json!({"type": "object"})),
+                                })
+                            }).collect())
+                            .unwrap_or_default();
+                        return Some(GameEvent::ToolsRegistered { tools, source });
+                    }
+                    Some("unregister") => {
+                        let tool_names: Vec<String> = parsed.get("tools")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|t| {
+                                t.as_str().map(String::from)
+                            }).collect())
+                            .unwrap_or_default();
+                        return Some(GameEvent::ToolsUnregistered { tool_names });
+                    }
+                    Some("result") => {
+                        let call_id = parsed.get("call_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let content: Vec<serde_json::Value> = parsed.get("content")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        let is_error = parsed.get("is_error")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        return Some(GameEvent::ToolResult { call_id, content, is_error });
+                    }
+                    _ => {} // Fall through to LuaMessage
+                }
+            }
+
             Some(GameEvent::LuaMessage { data: data_str })
         }
         _ => None,

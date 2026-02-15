@@ -102,6 +102,13 @@ pub enum GameCommand {
 
     #[serde(rename = "set_speed")]
     SetSpeed { speed: f32 },
+
+    #[serde(rename = "tool_call")]
+    ToolCall {
+        call_id: String,
+        tool: String,
+        args: serde_json::Value,
+    },
 }
 
 /// Translate engine return codes to human-readable errors.
@@ -348,6 +355,11 @@ pub fn dispatch(cb: &EngineCallbacks, cmd: &GameCommand) -> Result<(), String> {
 
         GameCommand::SetSpeed { .. } => {
             return Err("set_speed is not supported by the engine AI interface".into());
+        }
+
+        GameCommand::ToolCall { .. } => {
+            // Handled in lib.rs handleEvent(EVENT_UPDATE), not via dispatch()
+            return Ok(());
         }
     };
 

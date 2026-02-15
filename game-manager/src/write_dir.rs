@@ -33,6 +33,7 @@ pub fn init_write_dir(
     sai_bridge_lib: &Path,
     sai_bridge_data: &Path,
     widget_source: &Path,
+    widget_dir: &Path,
     agent_name: &str,
 ) -> anyhow::Result<()> {
     tracing::info!("Initializing agent write-dir: {}", base.display());
@@ -137,6 +138,27 @@ pub fn init_write_dir(
         tracing::info!("  Installed agent_bootstrap.lua");
     }
 
+    // 5b. Install all agent_*.lua widgets from widget directory
+    if widget_dir.is_dir() {
+        for entry in std::fs::read_dir(widget_dir)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            // Install agent_*.lua files (skip agent_bootstrap.lua — handled above)
+            if name_str.starts_with("agent_")
+                && name_str.ends_with(".lua")
+                && name_str != "agent_bootstrap.lua"
+            {
+                let src = entry.path();
+                let dest = base.join("LuaUI/Widgets").join(&name);
+                if should_update(&dest, &src)? {
+                    std::fs::copy(&src, &dest)?;
+                    tracing::info!("  Installed {}", name_str);
+                }
+            }
+        }
+    }
+
     // 6. Generate agent bootstrap config
     let json_path = base.join("LuaUI/Config/agent_bootstrap.json");
     if !json_path.exists() {
@@ -232,16 +254,32 @@ fn json_to_lua(value: &serde_json::Value, indent: usize) -> String {
 
 /// Configure ZK_order.lua to disable all widgets except Agent Bootstrap.
 /// Called before headless player-mode engine launches to prevent LuaUI OOM.
+/// Widget names that should be enabled in headless mode.
+const AGENT_WIDGETS: &[&str] = &[
+    "Agent Bootstrap",
+    "Agent Manager",
+    "Agent Threatmap",
+    "Agent Economy",
+    "Agent Roster",
+    "Agent Intel",
+    "Agent Squads",
+];
+
+/// Check if a widget name is one of our agent widgets.
+fn is_agent_widget(name: &str) -> bool {
+    AGENT_WIDGETS.iter().any(|w| name.contains(w))
+}
+
 pub fn configure_headless_widgets(write_dir: &Path) -> anyhow::Result<()> {
     let order_path = write_dir.join("LuaUI/Config/ZK_order.lua");
 
     if order_path.exists() {
-        // Read existing order file and set everything to 0 except our widget
+        // Read existing order file and set everything to 0 except our widgets
         let content = std::fs::read_to_string(&order_path)?;
         let mut new_lines = Vec::new();
         for line in content.lines() {
-            if line.contains("Agent Bootstrap") {
-                // Keep our widget enabled
+            if is_agent_widget(line) {
+                // Keep our widgets enabled
                 new_lines.push(line.to_string());
             } else if line.contains("] =") && !line.starts_with("--") {
                 // Disable other widgets: replace the order number with 0
@@ -259,12 +297,12 @@ pub fn configure_headless_widgets(write_dir: &Path) -> anyhow::Result<()> {
         std::fs::write(&order_path, new_lines.join("\n"))?;
     } else {
         // No prior run — write minimal order file.
-        // Widgets not in this list get enabled by default if LuaAutoModWidgets=1,
-        // so we also set that to 0 in springsettings.
-        std::fs::write(
-            &order_path,
-            "-- Widget Order List  (0 disables a widget)\nreturn {\n\t[\"Agent Bootstrap\"] = 1,\n\tversion = 8,\n}\n",
-        )?;
+        let mut content = String::from("-- Widget Order List  (0 disables a widget)\nreturn {\n");
+        for (i, name) in AGENT_WIDGETS.iter().enumerate() {
+            content.push_str(&format!("\t[\"{}\"] = {},\n", name, i + 1));
+        }
+        content.push_str("\tversion = 8,\n}\n");
+        std::fs::write(&order_path, content)?;
     }
 
     // Ensure LuaAutoModWidgets=0 so unknown widgets from archives don't auto-enable
@@ -278,7 +316,7 @@ pub fn configure_headless_widgets(write_dir: &Path) -> anyhow::Result<()> {
         }
     }
 
-    tracing::info!("Configured headless widget order (only Agent Bootstrap enabled)");
+    tracing::info!("Configured headless widget order ({} agent widgets enabled)", AGENT_WIDGETS.len());
     Ok(())
 }
 
@@ -304,6 +342,7 @@ pub struct WriteDirConfig {
     pub sai_bridge_lib: PathBuf,
     pub sai_bridge_data: PathBuf,
     pub widget_source: PathBuf,
+    pub widget_dir: PathBuf,
     pub agent_name: String,
 }
 
@@ -363,12 +402,21 @@ impl WriteDirConfig {
                 workspace.join("data/widgets/agent_bootstrap.lua")
             });
 
+        let widget_dir = std::env::var("WIDGET_DIR")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+                workspace.join("data/widgets")
+            });
+
         Self {
             write_dir,
             spring_home,
             sai_bridge_lib,
             sai_bridge_data,
             widget_source,
+            widget_dir,
             agent_name,
         }
     }
@@ -380,6 +428,7 @@ impl WriteDirConfig {
             &self.sai_bridge_lib,
             &self.sai_bridge_data,
             &self.widget_source,
+            &self.widget_dir,
             &self.agent_name,
         )
     }

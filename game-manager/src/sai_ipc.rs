@@ -9,6 +9,15 @@ use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
+/// A tool definition registered by a widget or plugin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    #[serde(rename = "inputSchema")]
+    pub input_schema: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetalSpot {
     pub x: f32,
@@ -185,6 +194,22 @@ pub enum SaiEvent {
     LuaMessage { data: String },
     #[serde(rename = "command_error")]
     CommandError { error: String, command: String },
+    #[serde(rename = "tools_registered")]
+    ToolsRegistered {
+        tools: Vec<ToolDefinition>,
+        source: String,
+    },
+    #[serde(rename = "tools_unregistered")]
+    ToolsUnregistered {
+        tool_names: Vec<String>,
+    },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        call_id: String,
+        content: Vec<serde_json::Value>,
+        #[serde(default)]
+        is_error: bool,
+    },
 }
 
 /// A command to send to a SAI bridge instance.
@@ -274,6 +299,12 @@ pub enum SaiCommand {
     Unpause,
     #[serde(rename = "set_speed")]
     SetSpeed { speed: f32 },
+    #[serde(rename = "tool_call")]
+    ToolCall {
+        call_id: String,
+        tool: String,
+        args: serde_json::Value,
+    },
 }
 
 /// A connected SAI bridge instance.

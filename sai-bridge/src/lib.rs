@@ -8,6 +8,7 @@ pub mod callbacks;
 pub mod commands;
 pub mod events;
 pub mod ipc;
+pub mod plugin;
 
 use callbacks::{EngineCallbacks, SSkirmishAICallback};
 use events::{enrich_event, parse_event, GameEvent, EVENT_INIT, EVENT_UPDATE};
@@ -19,6 +20,7 @@ use std::sync::Mutex;
 struct AiInstance {
     callbacks: EngineCallbacks,
     ipc: Option<IpcClient>,
+    plugin_host: Option<plugin::PluginHost>,
     frame_counter: u32,
 }
 
@@ -186,9 +188,23 @@ pub unsafe extern "C" fn init(
         }
     };
 
+    // Load plugins from <data_dir>/plugins/ if available
+    let plugin_host = cb.get_info_value("dataDir").map(|data_dir| {
+        let plugin_dir = std::path::Path::new(&data_dir).join("plugins");
+        let host = plugin::PluginHost::load_from(&plugin_dir);
+        if host.has_plugins() {
+            cb.log(&format!(
+                "[SAI Bridge] Loaded {} plugin tool(s)",
+                host.all_tools().len()
+            ));
+        }
+        host
+    });
+
     let instance = AiInstance {
         callbacks: cb,
         ipc,
+        plugin_host,
         frame_counter: 0,
     };
 
@@ -286,6 +302,18 @@ pub unsafe extern "C" fn handleEvent(
                 map_height: Some(map_height),
             };
             let _ = ipc.send_event(&event);
+
+            // Register plugin tools with GameManager
+            if let Some(ref host) = instance.plugin_host {
+                let tools = host.all_tools();
+                if !tools.is_empty() {
+                    let reg_event = GameEvent::ToolsRegistered {
+                        tools,
+                        source: "plugin".to_string(),
+                    };
+                    let _ = ipc.send_event(&reg_event);
+                }
+            }
         }
         return 0;
     }
@@ -298,6 +326,68 @@ pub unsafe extern "C" fn handleEvent(
         if let Some(ref mut ipc) = instance.ipc {
             let cmds = ipc.poll_commands();
             for cmd in &cmds {
+                // Intercept tool calls — route to plugin or LuaUI widget
+                if let commands::GameCommand::ToolCall { call_id, tool, args } = cmd {
+                    instance.callbacks.log(&format!(
+                        "[SAI Bridge] Tool call: {} (call_id={})", tool, call_id
+                    ));
+
+                    // Try plugin host first
+                    if let Some(ref mut host) = instance.plugin_host {
+                        let state = plugin::GameState::new(&instance.callbacks);
+                        if let Some(result) = host.call(tool, args, &state) {
+                            let result_event = GameEvent::ToolResult {
+                                call_id: call_id.clone(),
+                                content: result.content,
+                                is_error: result.is_error,
+                            };
+                            let _ = ipc.send_event(&result_event);
+                            continue;
+                        }
+                    }
+
+                    // Fall through to LuaUI widget
+                    let call_json = serde_json::json!({
+                        "op": "call",
+                        "call_id": call_id,
+                        "tool": tool,
+                        "args": args,
+                    }).to_string();
+
+                    let (content, is_error) = match instance.callbacks.call_lua_ui(&call_json) {
+                        Some(response) => {
+                            // Try to parse as widget protocol result
+                            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&response) {
+                                if parsed.get("op").and_then(|v| v.as_str()) == Some("result") {
+                                    let content = parsed.get("content")
+                                        .and_then(|v| v.as_array())
+                                        .cloned()
+                                        .unwrap_or_else(|| vec![serde_json::json!({"type": "text", "text": response})]);
+                                    let is_err = parsed.get("is_error")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
+                                    (content, is_err)
+                                } else {
+                                    (vec![serde_json::json!({"type": "text", "text": response})], false)
+                                }
+                            } else {
+                                (vec![serde_json::json!({"type": "text", "text": response})], false)
+                            }
+                        }
+                        None => {
+                            (vec![serde_json::json!({"type": "text", "text": format!("No handler for tool '{}'", tool)})], true)
+                        }
+                    };
+
+                    let result_event = GameEvent::ToolResult {
+                        call_id: call_id.clone(),
+                        content,
+                        is_error,
+                    };
+                    let _ = ipc.send_event(&result_event);
+                    continue;
+                }
+
                 instance.callbacks.log(&format!("[SAI Bridge] Dispatching: {:?}", cmd));
                 if let Err(e) = commands::dispatch(&instance.callbacks, cmd) {
                     instance
