@@ -304,33 +304,46 @@ async function main() {
     modules: [zkModule, wake],
   });
 
+  const ts = () => new Date().toISOString().slice(11, 23);
   framework.onTrace((event) => {
     switch (event.type) {
       case 'inference:started':
-        console.log('\n[INFERENCE] Starting...');
+        console.log(`\n${ts()} [INFERENCE] Starting...`);
         break;
       case 'inference:tokens': {
         const content = (event as { content?: string }).content;
         if (content) process.stdout.write(content);
         break;
       }
-      case 'inference:completed':
+      case 'inference:completed': {
         process.stdout.write('\n');
-        console.log('[INFERENCE] Complete');
+        const e = event as { durationMs?: number; tokenUsage?: { input?: number; output?: number; cacheCreation?: number; cacheRead?: number } };
+        const usage = e.tokenUsage;
+        const parts = [`${e.durationMs}ms`];
+        if (usage) {
+          parts.push(`in:${usage.input} out:${usage.output}`);
+          if (usage.cacheRead) parts.push(`cache_read:${usage.cacheRead}`);
+          if (usage.cacheCreation) parts.push(`cache_write:${usage.cacheCreation}`);
+        }
+        console.log(`${ts()} [INFERENCE] Complete (${parts.join(' | ')})`);
         break;
+      }
       case 'inference:failed': {
         const err = event as { error?: string; stack?: string };
-        console.error('[ERROR]', err.error);
+        console.error(`${ts()} [ERROR]`, err.error);
         if (err.stack) console.error(err.stack);
         break;
       }
       case 'inference:tool_calls_yielded': {
         const calls = (event as { calls: Array<{ name: string }> }).calls;
-        console.log(`\n[TOOLS] ${calls.map((c) => c.name).join(', ')}`);
+        console.log(`\n${ts()} [TOOLS] ${calls.map((c) => c.name).join(', ')}`);
         break;
       }
+      case 'inference:stream_resumed':
+        console.log(`${ts()} [INFERENCE] Stream resumed (tool results provided)`);
+        break;
       case 'tool:started':
-        console.log('[TOOL]', (event as { tool?: string }).tool);
+        console.log(`${ts()} [TOOL]`, (event as { tool?: string }).tool);
         break;
     }
   });
