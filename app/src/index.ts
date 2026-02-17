@@ -17,7 +17,7 @@
  *   GAME_MANAGER_BIN   - Path to game-manager binary
  *   WRITE_DIR         - Agent write directory (default: ~/.spring-loom)
  *   MAP               - Map name (default: Comet Catcher Redux v3.1)
- *   OPPONENT          - Opponent AI (default: NullAI)
+ *   OPPONENT          - Opponent AI (default: CircuitAINovice)
  *   STORE_PATH        - Chronicle store path (default: ./data/store)
  *   PLAY_MODE         - "local" or "lobby" (default: local)
  *   ZK_USERNAME       - Zero-K lobby username (required for lobby mode)
@@ -40,7 +40,7 @@ const config = {
   gmBin: process.env.GAME_MANAGER_BIN || resolve(__dirname, '../../game-manager/target/release/game-manager'),
   writeDir: process.env.WRITE_DIR || resolve(homedir(), '.spring-loom'),
   map: process.env.MAP || 'TitanDuel 2.2',
-  opponent: process.env.OPPONENT || 'NullAI',
+  opponent: process.env.OPPONENT || 'CircuitAINovice',
   storePath: process.env.STORE_PATH || './data/store',
   playMode: (process.env.PLAY_MODE || 'local') as 'local' | 'lobby',
   zkUsername: process.env.ZK_USERNAME || '',
@@ -118,7 +118,7 @@ The world keeps moving while you think and while you sleep. Be decisive — issu
 1. \`zk:lobby_connect\` — connect to the lobby server
 2. \`zk:lobby_login\` — authenticate with provided credentials
 3. \`zk:lobby_open_battle\` — host a custom battle room with a title and map
-4. \`zk:lobby_add_bot\` — add an AI opponent (e.g. ai_lib: "NullAI")
+4. \`zk:lobby_add_bot\` — add an AI opponent (e.g. ai_lib: "CircuitAINovice")
 5. \`zk:lobby_start_battle\` — start the game
 
 In both modes, a game channel is created. Once the game starts, you'll receive an \`init\` event — that's your cue to begin playing.
@@ -244,45 +244,23 @@ You'll be woken when a matching event arrives OR the timeout expires. All events
 
 **Always include \`command_error\` and \`message\` in your wake events.**
 
-## Situational Awareness Tools
+## Situational Awareness — HUD Overlays
 
-You have access to advanced tools provided by in-game widgets. These appear dynamically when a game starts and give you much better battlefield awareness than raw events alone. **Use them actively** — don't just react to events, proactively query the situation.
+Widget tools register dynamically after game start. You'll receive a notification when they're available.
 
-### Economy (\`economy:snapshot\`, \`economy:history\`)
-- \`economy:snapshot\` — Current metal/energy income, spending, storage, and stall risk. **Check this every wake cycle** to catch stalls early.
-- \`economy:history\` with \`{frames: N}\` — Resource trends over time. Use to spot declining income or rising spending.
+Once tools are online, **immediately enable HUD overlays** for automatic situational awareness:
+  zk:hud_enable {name: "economy"}
+  zk:hud_enable {name: "roster"}
 
-### Unit Roster (\`roster:own\`, \`roster:enemies\`, \`roster:unit\`)
-- \`roster:own\` — All your units grouped by role (raider, assault, skirm, riot, arty, aa, con, factory, commander, other) with HP and positions. Use this instead of trying to remember every unit_created event.
-- \`roster:enemies\` — All visible enemy units.
-- \`roster:unit\` with \`{id: N}\` — Detailed info for a single unit.
+Enabled HUDs are queried automatically before every inference. Their compact summaries appear
+in a \`--- HUD ---\` block in your context. You do NOT need to manually call economy:snapshot
+or roster:own — the HUD handles it.
 
-### Intel (\`intel:known_enemies\`, \`intel:scouted_areas\`)
-- \`intel:known_enemies\` — Last-known enemy positions with confidence scores (decays over time since last sighting). Includes enemies that left your vision.
-- \`intel:scouted_areas\` — Map divided into sectors with staleness (frames since last observed). Staleness -1 means never scouted. **Send raiders to stale sectors** to maintain map awareness.
+Available HUD sources: economy, roster, intel, threat, squads.
+Use zk:hud_list to see active HUDs. Use zk:hud_disable to turn one off.
 
-### Threat Assessment (\`threat:query\`, \`threat:sectors\`)
-- \`threat:query\` with \`{x, z, radius}\` — Threat level at a specific location. Check before sending units into an area.
-- \`threat:sectors\` — Full threat grid across the map. Use for strategic decisions about where to attack or defend.
-
-### Squads (\`squad:create\`, \`squad:list\`, \`squad:order\`, etc.)
-- \`squad:create\` with \`{name, ids}\` — Group units into a named squad.
-- \`squad:list\` — List all squads with their units and positions.
-- \`squad:order\` with \`{id, command, params}\` — Issue a command to all units in a squad at once. Commands: move, patrol, fight, attack, guard, stop, wait. Params: \`{x, z}\` for movement, \`{target_id}\` for attack, \`{guard_id}\` for guard. Add \`{queue: true}\` to shift-queue.
-- \`squad:add\` / \`squad:remove\` — Modify squad membership.
-- \`squad:disband\` — Delete a squad.
-
-**Use squads for coordinated attacks** — group raiders into a "raider" squad, assault units into "main army", etc. It's much more efficient than issuing individual orders.
-
-### Recommended Think Cycle
-1. Check \`economy:snapshot\` — are you stalling? Overflowing?
-2. Check \`roster:own\` — what forces do you have? Any idle units?
-3. Check \`intel:known_enemies\` — where is the enemy?
-4. Check \`threat:query\` for areas you plan to move into
-5. Issue commands / squad orders
-6. Set wake conditions and sleep
-
-You don't need all of these every cycle — use judgment. But **always check economy** and **always check your roster** before making decisions.
+For detailed queries (single unit info, specific threat location, squad orders), call the full
+tools directly — the HUD only provides summaries.
 
 ## Narration
 

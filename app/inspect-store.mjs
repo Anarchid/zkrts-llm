@@ -15,8 +15,40 @@ if (log) {
     console.log('---');
     console.log('Agent:', e.agentName, '| Success:', e.success, '| Stop:', e.stopReason);
     console.log('Duration:', e.durationMs, 'ms | Tokens:', JSON.stringify(e.tokenUsage));
-    if (e.request?.note) console.log('Request:', e.request.note);
-    if (e.request?.blobId) console.log('Request: [blob', e.request.blobId, ']');
+
+    // Resolve request (may be inline object, blob ref, or old stub)
+    let req = e.request;
+    if (req?.blobId) {
+      const blob = store.getBlob(req.blobId);
+      if (blob) {
+        try { req = JSON.parse(Buffer.from(blob).toString('utf8')); }
+        catch { req = { note: `[blob ${req.blobId}]` }; }
+      }
+    }
+    if (req?.note) {
+      console.log('Request:', req.note);
+    } else if (req?.messages) {
+      console.log('Request: compiled context (' + req.messages.length + ' messages, model: ' + (req.config?.model || '?') + ')');
+      // Show message roles and content previews
+      for (const msg of req.messages) {
+        const role = msg.participant || msg.role || '?';
+        const blocks = msg.content || [];
+        const preview = blocks.map(b => {
+          if (b.type === 'text') return b.text?.substring(0, 120) + (b.text?.length > 120 ? '...' : '');
+          if (b.type === 'tool_use') return `[tool_use: ${b.name}]`;
+          if (b.type === 'tool_result') return `[tool_result: ${b.toolUseId}]`;
+          return `[${b.type}]`;
+        }).join(' | ');
+        console.log(`    ${role}: ${preview}`);
+      }
+      if (req.system) {
+        console.log('  System prompt: ' + req.system.substring(0, 80) + '...');
+      }
+      if (req.tools) {
+        console.log('  Tools: ' + req.tools.map(t => t.name).join(', '));
+      }
+    }
+
     if (e.response?.blobId) console.log('Response: [blob', e.response.blobId, ']');
   }
 } else {
@@ -90,27 +122,33 @@ for (const m of msgItems) {
 console.log('  Total message content chars:', totalChars);
 console.log('  Est tokens for all messages:', Math.round(totalChars / 4));
 
-// Check response blobs
+// Check response blobs from inference log
 console.log('\n=== RESPONSE BLOBS ===');
-for (const blobId of ['2c806487beb4767da1cc5f8eeb4f03af8ff332076e16ca1b0660048eb0b6e3ab', '9efcea796a9e72a0b9eb42f42bd724d88d10a4ac3f1f1b75135b7016742fdc9f']) {
-  const blob = store.getBlob(blobId);
-  if (blob) {
-    const text = Buffer.from(blob).toString('utf8');
-    const parsed = JSON.parse(text);
-    // Show content blocks
-    if (parsed.content) {
-      console.log(`\nBlob ${blobId.substring(0, 8)}... content blocks:`);
-      for (const block of parsed.content) {
-        if (block.type === 'text') {
-          console.log(`  text: "${block.text.substring(0, 150)}"`);
-        } else if (block.type === 'tool_use') {
-          console.log(`  tool_use: ${block.name} (${block.id})`);
-        } else {
-          console.log(`  ${block.type}`);
+if (log) {
+  const entries = Array.isArray(log) ? log : JSON.parse(log);
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const blobId = e.response?.blobId;
+    if (!blobId) continue;
+    const blob = store.getBlob(blobId);
+    if (blob) {
+      try {
+        const parsed = JSON.parse(Buffer.from(blob).toString('utf8'));
+        if (parsed.content) {
+          console.log(`\nInference ${i} response (${blobId.substring(0, 8)}...):`);
+          for (const block of parsed.content) {
+            if (block.type === 'text') {
+              console.log(`  text: "${block.text.substring(0, 150)}"`);
+            } else if (block.type === 'tool_use') {
+              console.log(`  tool_use: ${block.name} (${block.id})`);
+            } else {
+              console.log(`  ${block.type}`);
+            }
+          }
+          if (parsed.stopReason) console.log('  stopReason:', parsed.stopReason);
         }
-      }
+      } catch { console.log(`  [blob ${blobId.substring(0, 8)}... parse error]`); }
     }
-    if (parsed.stopReason) console.log('  stopReason:', parsed.stopReason);
   }
 }
 

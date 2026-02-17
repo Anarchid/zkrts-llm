@@ -349,34 +349,44 @@ impl GameManager {
         }
     }
 
-    /// Forward a SAI event as channels/incoming to the MCPL client.
-    async fn forward_sai_event(
+    /// Forward SAI events as a batched channels/incoming to the MCPL client.
+    /// Batching avoids head-of-line blocking: previously each event was sent as
+    /// a separate request+await, blocking the select loop (and thus tool call
+    /// processing) until the AF responded to every single event.
+    async fn forward_sai_events_batched(
         &mut self,
         channel_id: &str,
-        event: &sai_ipc::SaiEvent,
+        events: &[&sai_ipc::SaiEvent],
     ) {
+        if events.is_empty() {
+            return;
+        }
         let mcpl = match &mut self.mcpl {
             Some(c) => c,
             None => return,
         };
 
-        let content_text = sai_ipc::event_to_content(event);
-        let msg_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        let messages: Vec<mcpl_core::methods::IncomingChannelMessage> = events
+            .iter()
+            .map(|event| {
+                let content_text = sai_ipc::event_to_content(event);
+                mcpl_core::methods::IncomingChannelMessage {
+                    channel_id: channel_id.to_string(),
+                    message_id: uuid::Uuid::new_v4().to_string(),
+                    thread_id: None,
+                    author: MessageAuthor {
+                        id: "engine".into(),
+                        name: "Game Engine".into(),
+                    },
+                    content: vec![ContentBlock::text(content_text)],
+                    timestamp: now.clone(),
+                    metadata: None,
+                }
+            })
+            .collect();
 
-        let params = ChannelsIncomingParams {
-            messages: vec![mcpl_core::methods::IncomingChannelMessage {
-                channel_id: channel_id.to_string(),
-                message_id: msg_id,
-                thread_id: None,
-                author: MessageAuthor {
-                    id: "engine".into(),
-                    name: "Game Engine".into(),
-                },
-                content: vec![ContentBlock::text(content_text)],
-                timestamp: chrono::Utc::now().to_rfc3339(),
-                metadata: None,
-            }],
-        };
+        let params = ChannelsIncomingParams { messages };
 
         let _ = mcpl
             .send_request(
@@ -2093,14 +2103,16 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
 
-                    // Process events
+                    // Process events: handle internal events immediately,
+                    // collect forwardable events for batched delivery
+                    let mut forwardable: Vec<&sai_ipc::SaiEvent> = Vec::new();
                     for event in &events {
                         // Skip Update ticks — noise for the LLM
                         if matches!(event, sai_ipc::SaiEvent::Update { .. }) {
                             continue;
                         }
 
-                        // Handle dynamic tool registration
+                        // Handle internal events (tool registration, tool results)
                         match event {
                             sai_ipc::SaiEvent::ToolsRegistered { tools, source } => {
                                 let tool_defs: Vec<sai_ipc::ToolDefinition> = tools.iter().map(|t| {
@@ -2122,7 +2134,7 @@ async fn main() -> anyhow::Result<()> {
                                         None,
                                     ).await;
                                 }
-                                continue; // Don't forward registration events to the agent
+                                continue;
                             }
                             sai_ipc::SaiEvent::ToolsUnregistered { tool_names } => {
                                 let removed = gm.tool_registry.unregister(tool_names);
@@ -2156,8 +2168,12 @@ async fn main() -> anyhow::Result<()> {
                             _ => {}
                         }
 
-                        gm.forward_sai_event(&channel_id, event).await;
+                        forwardable.push(event);
                     }
+
+                    // Forward all game events in a single batched request
+                    // (avoids head-of-line blocking from per-event request+await)
+                    gm.forward_sai_events_batched(&channel_id, &forwardable).await;
                 }
             }
         }

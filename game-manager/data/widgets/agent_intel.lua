@@ -91,6 +91,45 @@ local function handleToolCall(toolName, args)
             text = string.format('{"count":%d,"enemies":[%s]}', #results, table.concat(results, ",")),
         }
 
+    elseif toolName == "intel:hud" then
+        local currentFrame = Spring.GetGameFrame()
+        local totalKnown = 0
+        local fresh = 0     -- confidence > 0.7
+        local stale = 0     -- confidence <= 0.7
+
+        for unitID, info in pairs(knownEnemies) do
+            local age = currentFrame - info.lastSeen
+            local confidence = math.max(0, 1.0 - age * DECAY_RATE)
+            if confidence > 0.05 then
+                totalKnown = totalKnown + 1
+                if confidence > 0.7 then
+                    fresh = fresh + 1
+                else
+                    stale = stale + 1
+                end
+            end
+        end
+
+        -- Compute scouted percentage
+        local totalSectors = sectorsW * sectorsH
+        local scoutedCount = 0
+        for sz = 1, sectorsH do
+            for sx = 1, sectorsW do
+                if scoutMap[sz][sx].lastObserved >= 0 then
+                    scoutedCount = scoutedCount + 1
+                end
+            end
+        end
+        local scoutedPct = totalSectors > 0 and math.floor(scoutedCount / totalSectors * 100) or 0
+
+        return {
+            type = "text",
+            text = string.format(
+                "Known enemies: %d (%d fresh, %d stale) | Scouted: %d%%",
+                totalKnown, fresh, stale, scoutedPct
+            ),
+        }
+
     elseif toolName == "intel:scouted_areas" then
         local currentFrame = Spring.GetGameFrame()
         local sectors = {}
@@ -140,6 +179,11 @@ function widget:Initialize()
             {
                 name = "intel:known_enemies",
                 description = "Get last-known enemy positions with confidence scores. Confidence decays over time since last sighting.",
+                inputSchema = { type = "object" },
+            },
+            {
+                name = "intel:hud",
+                description = "Compact one-line intel summary for HUD overlay.",
                 inputSchema = { type = "object" },
             },
             {

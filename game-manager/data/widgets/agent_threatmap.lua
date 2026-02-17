@@ -157,6 +157,37 @@ local function handleToolCall(toolName, args)
                 ),
         }
 
+    elseif toolName == "threat:hud" then
+        -- Compact summary: total threat + top hotspots
+        local totalThreat = 0
+        local hotspots = {}
+        for gz = 1, gridH do
+            for gx = 1, gridW do
+                local cell = grid[gz][gx]
+                if cell.threat > 0 then
+                    totalThreat = totalThreat + cell.threat
+                    hotspots[#hotspots + 1] = {
+                        x = (gx - 0.5) * GRID_SIZE,
+                        z = (gz - 0.5) * GRID_SIZE,
+                        threat = cell.threat,
+                    }
+                end
+            end
+        end
+        -- Sort hotspots by threat descending, take top 3
+        table.sort(hotspots, function(a, b) return a.threat > b.threat end)
+        local hsParts = {}
+        for i = 1, math.min(3, #hotspots) do
+            local hs = hotspots[i]
+            hsParts[#hsParts + 1] = string.format("(%.0f,%.0f):%.1f", hs.x, hs.z, hs.threat)
+        end
+
+        local hsText = #hsParts > 0 and table.concat(hsParts, " ") or "none"
+        return {
+            type = "text",
+            text = string.format("Threat total: %.1f | Hotspots: %s", totalThreat, hsText),
+        }
+
     elseif toolName == "threat:sectors" then
         local sectors = {}
         for gz = 1, gridH do
@@ -214,6 +245,11 @@ function widget:Initialize()
                     },
                     required = { "x", "z" },
                 },
+            },
+            {
+                name = "threat:hud",
+                description = "Compact one-line threat summary for HUD overlay.",
+                inputSchema = { type = "object" },
             },
             {
                 name = "threat:sectors",

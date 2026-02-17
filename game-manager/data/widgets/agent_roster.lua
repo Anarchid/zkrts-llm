@@ -141,6 +141,45 @@ local function handleToolCall(toolName, args)
             text = string.format('{"total":%d,%s}', totalCount, table.concat(parts, ",")),
         }
 
+    elseif toolName == "roster:hud" then
+        -- Compact summary: count by role
+        local counts = {}
+        local total = 0
+        for unitID, entry in pairs(ownUnits) do
+            local info = getUnitInfo(unitID)
+            if info then
+                local role = info.role
+                counts[role] = (counts[role] or 0) + 1
+                total = total + 1
+            end
+        end
+        local parts = {}
+        -- Fixed order for consistent output
+        local roleOrder = {"commander", "factory", "con", "raider", "assault", "skirm", "riot", "arty", "aa", "other"}
+        for _, role in ipairs(roleOrder) do
+            if counts[role] then
+                local abbrev = role:sub(1, 4)
+                parts[#parts + 1] = string.format("%s×%d", abbrev, counts[role])
+            end
+        end
+
+        -- Count visible enemies
+        local myAllyTeam = Spring.GetMyAllyTeamID()
+        local enemies = Spring.GetVisibleUnits(-1, nil, false)
+        local enemyCount = 0
+        if enemies then
+            for _, unitID in ipairs(enemies) do
+                if Spring.GetUnitAllyTeam(unitID) ~= myAllyTeam then
+                    enemyCount = enemyCount + 1
+                end
+            end
+        end
+
+        return {
+            type = "text",
+            text = string.format("Own(%d): %s | Enemies visible: %d", total, table.concat(parts, " "), enemyCount),
+        }
+
     elseif toolName == "roster:enemies" then
         local myAllyTeam = Spring.GetMyAllyTeamID()
         local enemies = Spring.GetVisibleUnits(-1, nil, false)
@@ -226,6 +265,11 @@ function widget:Initialize()
             {
                 name = "roster:own",
                 description = "Get own unit roster grouped by role (factory, raider, assault, skirm, riot, arty, aa, con, commander, other). Includes unit positions and health.",
+                inputSchema = { type = "object" },
+            },
+            {
+                name = "roster:hud",
+                description = "Compact one-line roster summary for HUD overlay.",
                 inputSchema = { type = "object" },
             },
             {

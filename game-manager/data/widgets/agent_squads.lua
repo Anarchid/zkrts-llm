@@ -120,6 +120,24 @@ local function handleToolCall(toolName, args)
             text = squadToJSON(id, squads[id]),
         }
 
+    elseif toolName == "squad:hud" then
+        -- Compact summary: squad names with sizes
+        local parts = {}
+        for id, squad in pairs(squads) do
+            -- Count alive units
+            local alive = 0
+            for unitID, _ in pairs(squad.units) do
+                if Spring.ValidUnitID(unitID) and not Spring.GetUnitIsDead(unitID) then
+                    alive = alive + 1
+                end
+            end
+            if alive > 0 then
+                parts[#parts + 1] = string.format("%s(%d)", squad.name, alive)
+            end
+        end
+        local text = #parts > 0 and ("Squads: " .. table.concat(parts, " ")) or "Squads: none"
+        return { type = "text", text = text }
+
     elseif toolName == "squad:list" then
         local results = {}
         for id, squad in pairs(squads) do
@@ -248,6 +266,11 @@ function widget:Initialize()
                     },
                     required = { "name" },
                 },
+            },
+            {
+                name = "squad:hud",
+                description = "Compact one-line squad summary for HUD overlay.",
+                inputSchema = { type = "object" },
             },
             {
                 name = "squad:list",

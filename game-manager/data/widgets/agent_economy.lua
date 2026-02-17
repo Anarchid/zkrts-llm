@@ -113,6 +113,31 @@ local function handleToolCall(toolName, args)
 
         return { type = "text", text = text }
 
+    elseif toolName == "economy:hud" then
+        local snap = getSnapshot()
+        if not snap then
+            return { type = "text", text = "no data" }
+        end
+        local stall = "none"
+        if snap.stall_risk.metal and snap.stall_risk.energy then
+            stall = "metal+energy"
+        elseif snap.stall_risk.metal then
+            stall = "metal"
+        elseif snap.stall_risk.energy then
+            stall = "energy"
+        end
+        return {
+            type = "text",
+            text = string.format(
+                "M: %s/%s (+%s/-%s) E: %s/%s (+%s/-%s) | stall: %s",
+                formatNumber(snap.metal.current), formatNumber(snap.metal.storage),
+                formatNumber(snap.metal.income), formatNumber(snap.metal.expense),
+                formatNumber(snap.energy.current), formatNumber(snap.energy.storage),
+                formatNumber(snap.energy.income), formatNumber(snap.energy.expense),
+                stall
+            ),
+        }
+
     elseif toolName == "economy:history" then
         local maxFrames = tonumber(args.frames) or 60
         local maxSamples = math.min(maxFrames, historyCount)
@@ -154,6 +179,11 @@ function widget:Initialize()
             {
                 name = "economy:snapshot",
                 description = "Get current economy state: metal/energy current, storage, income, expense, and stall risk indicators.",
+                inputSchema = { type = "object" },
+            },
+            {
+                name = "economy:hud",
+                description = "Compact one-line economy summary for HUD overlay.",
                 inputSchema = { type = "object" },
             },
             {
