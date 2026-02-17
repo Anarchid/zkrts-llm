@@ -17,7 +17,7 @@
  *   GAME_MANAGER_BIN   - Path to game-manager binary
  *   WRITE_DIR         - Agent write directory (default: ~/.spring-loom)
  *   MAP               - Map name (default: Comet Catcher Redux v3.1)
- *   OPPONENT          - Opponent AI (default: CircuitAINovice)
+ *   OPPONENT          - Opponent AI (default: 1052188CircuitAINovice64)
  *   STORE_PATH        - Chronicle store path (default: ./data/store)
  *   PLAY_MODE         - "local" or "lobby" (default: local)
  *   ZK_USERNAME       - Zero-K lobby username (required for lobby mode)
@@ -40,7 +40,7 @@ const config = {
   gmBin: process.env.GAME_MANAGER_BIN || resolve(__dirname, '../../game-manager/target/release/game-manager'),
   writeDir: process.env.WRITE_DIR || resolve(homedir(), '.spring-loom'),
   map: process.env.MAP || 'TitanDuel 2.2',
-  opponent: process.env.OPPONENT || 'CircuitAINovice',
+  opponent: process.env.OPPONENT || '1052188CircuitAINovice64',
   storePath: process.env.STORE_PATH || './data/store',
   playMode: (process.env.PLAY_MODE || 'local') as 'local' | 'lobby',
   zkUsername: process.env.ZK_USERNAME || '',
@@ -118,7 +118,7 @@ The world keeps moving while you think and while you sleep. Be decisive — issu
 1. \`zk:lobby_connect\` — connect to the lobby server
 2. \`zk:lobby_login\` — authenticate with provided credentials
 3. \`zk:lobby_open_battle\` — host a custom battle room with a title and map
-4. \`zk:lobby_add_bot\` — add an AI opponent (e.g. ai_lib: "CircuitAINovice")
+4. \`zk:lobby_add_bot\` — add an AI opponent (e.g. ai_lib: "1052188CircuitAINovice64")
 5. \`zk:lobby_start_battle\` — start the game
 
 In both modes, a game channel is created. Once the game starts, you'll receive an \`init\` event — that's your cue to begin playing.

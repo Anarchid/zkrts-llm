@@ -242,7 +242,7 @@ impl EngineInstance {
             .config
             .opponent_ai
             .as_deref()
-            .unwrap_or("CircuitAINovice");
+            .unwrap_or("1052188CircuitAINovice64");
 
         format!(
             r#"[GAME]
@@ -309,7 +309,7 @@ impl EngineInstance {
             .config
             .opponent_ai
             .as_deref()
-            .unwrap_or("CircuitAINovice");
+            .unwrap_or("1052188CircuitAINovice64");
 
         format!(
             r#"[GAME]
@@ -419,7 +419,7 @@ impl EngineManager {
             agent_ai: "AgentBridge".to_string(),
             agent_team: 0,
             opponent_ai: Some(
-                opponent.unwrap_or("CircuitAINovice").to_string(),
+                opponent.unwrap_or("1052188CircuitAINovice64").to_string(),
             ),
             opponent_team: 1,
             multiplayer: None,

@@ -1426,7 +1426,7 @@ impl GameManager {
         let opponent = args
             .get("opponent")
             .and_then(|v| v.as_str())
-            .unwrap_or("CircuitAINovice");
+            .unwrap_or("1052188CircuitAINovice64");
         let game = args
             .get("game")
             .and_then(|v| v.as_str())

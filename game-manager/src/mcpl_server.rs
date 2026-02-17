@@ -160,7 +160,7 @@ pub fn lobby_tools() -> serde_json::Value {
                     "properties": {
                         "map": { "type": "string", "description": "Map name (e.g., 'Comet Catcher Redux')" },
                         "game": { "type": "string", "default": "Zero-K $VERSION", "description": "Game type / archive name" },
-                        "opponent": { "type": "string", "default": "CircuitAINovice", "description": "Opponent AI shortname" },
+                        "opponent": { "type": "string", "default": "1052188CircuitAINovice64", "description": "Opponent AI shortname" },
                         "headless": { "type": "boolean", "default": true, "description": "Run without UI (true) or with UI (false)" },
                         "player_mode": { "type": "boolean", "default": false, "description": "Agent as PLAYER slot (widget hands control via /aicontrol)" }
                     },
@@ -187,7 +187,7 @@ pub fn lobby_tools() -> serde_json::Value {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "ai_lib": { "type": "string", "description": "AI shortname (e.g. 'NullAI', 'CircuitAINovice')" },
+                        "ai_lib": { "type": "string", "description": "AI shortname (e.g. 'NullAI', '1052188CircuitAINovice64')" },
                         "name": { "type": "string", "default": "Bot1", "description": "Bot display name" },
                         "ally_number": { "type": "integer", "default": 1, "description": "Team/ally number (0-based)" }
                     },

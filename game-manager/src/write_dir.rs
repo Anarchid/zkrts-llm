@@ -106,6 +106,28 @@ pub fn init_write_dir(
         }
     }
 
+    // Symlink other Skirmish AIs (CircuitAI variants etc.) from spring_home.
+    // We manage AgentBridge ourselves, so skip that.
+    let skirmish_home = spring_home.join("AI/Skirmish");
+    let skirmish_local = base.join("AI/Skirmish");
+    if skirmish_home.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&skirmish_home) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if name == "AgentBridge" {
+                    continue; // managed locally
+                }
+                let link = skirmish_local.join(&name);
+                if link.exists() || link.symlink_metadata().is_ok() {
+                    continue; // already present
+                }
+                let target = entry.path();
+                std::os::unix::fs::symlink(&target, &link)?;
+                tracing::info!("  Symlinked AI/Skirmish/{} -> {}", name.to_string_lossy(), target.display());
+            }
+        }
+    }
+
     // 4. Install SAI bridge
     let ai_dir = base.join("AI/Skirmish/AgentBridge/0.1");
     let lib_dest = ai_dir.join("libSkirmishAI.so");
