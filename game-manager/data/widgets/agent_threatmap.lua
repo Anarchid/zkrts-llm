@@ -188,6 +188,16 @@ local function handleToolCall(toolName, args)
             text = string.format("Threat total: %.1f | Hotspots: %s", totalThreat, hsText),
         }
 
+    elseif toolName == "threat:desc" then
+        return {
+            type = "text",
+            text = "Threat map computes per-sector threat from visible enemy metal cost. " ..
+                   "Use threat:query before sending units to an area to check if it's safe. " ..
+                   "Hotspots in the HUD show the top 3 highest-threat locations. " ..
+                   "Threat only covers visible enemies — unscouted areas have zero threat but may still be dangerous. " ..
+                   "Combine with intel data for a fuller picture.",
+        }
+
     elseif toolName == "threat:sectors" then
         local sectors = {}
         for gz = 1, gridH do
@@ -249,6 +259,11 @@ function widget:Initialize()
             {
                 name = "threat:hud",
                 description = "Compact one-line threat summary for HUD overlay.",
+                inputSchema = { type = "object" },
+            },
+            {
+                name = "threat:desc",
+                description = "Usage guide for threat tools.",
                 inputSchema = { type = "object" },
             },
             {

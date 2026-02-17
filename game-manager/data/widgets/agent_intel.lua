@@ -130,6 +130,15 @@ local function handleToolCall(toolName, args)
             ),
         }
 
+    elseif toolName == "intel:desc" then
+        return {
+            type = "text",
+            text = "Intel tracks enemy last-known positions with confidence that decays over time since last sighting. " ..
+                   "Fresh contacts (confidence >0.7) were seen recently; stale ones may have moved. " ..
+                   "The scouting map divides the map into sectors — staleness=-1 means never scouted, prioritize those areas. " ..
+                   "Use intel:known_enemies for detailed enemy positions. Enable the HUD overlay for automatic intel awareness.",
+        }
+
     elseif toolName == "intel:scouted_areas" then
         local currentFrame = Spring.GetGameFrame()
         local sectors = {}
@@ -184,6 +193,11 @@ function widget:Initialize()
             {
                 name = "intel:hud",
                 description = "Compact one-line intel summary for HUD overlay.",
+                inputSchema = { type = "object" },
+            },
+            {
+                name = "intel:desc",
+                description = "Usage guide for intel tools.",
                 inputSchema = { type = "object" },
             },
             {

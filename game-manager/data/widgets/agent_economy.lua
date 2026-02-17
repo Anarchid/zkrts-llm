@@ -52,6 +52,9 @@ local function getSnapshot()
     local metalStallRisk = (mInc > 0) and (mCur / mInc < 2) or false
     local energyStallRisk = (eInc > 0) and (eCur / eInc < 2) or false
 
+    local metalExcess = (mStor > 0) and (mCur / mStor > 0.9) and (mInc > mExp)
+    local energyExcess = (eStor > 0) and (eCur / eStor > 0.9) and (eInc > eExp)
+
     return {
         frame = Spring.GetGameFrame(),
         metal = {
@@ -71,6 +74,10 @@ local function getSnapshot()
         stall_risk = {
             metal  = metalStallRisk,
             energy = energyStallRisk,
+        },
+        excess = {
+            metal  = metalExcess or false,
+            energy = energyExcess or false,
         },
     }
 end
@@ -102,13 +109,15 @@ local function handleToolCall(toolName, args)
             '{"frame":%d,' ..
             '"metal":{"current":%s,"storage":%s,"income":%s,"expense":%s},' ..
             '"energy":{"current":%s,"storage":%s,"income":%s,"expense":%s},' ..
-            '"stall_risk":{"metal":%s,"energy":%s}}',
+            '"stall_risk":{"metal":%s,"energy":%s},' ..
+            '"excess":{"metal":%s,"energy":%s}}',
             snap.frame,
             formatNumber(snap.metal.current), formatNumber(snap.metal.storage),
             formatNumber(snap.metal.income), formatNumber(snap.metal.expense),
             formatNumber(snap.energy.current), formatNumber(snap.energy.storage),
             formatNumber(snap.energy.income), formatNumber(snap.energy.expense),
-            tostring(snap.stall_risk.metal), tostring(snap.stall_risk.energy)
+            tostring(snap.stall_risk.metal), tostring(snap.stall_risk.energy),
+            tostring(snap.excess.metal), tostring(snap.excess.energy)
         )
 
         return { type = "text", text = text }
@@ -126,16 +135,40 @@ local function handleToolCall(toolName, args)
         elseif snap.stall_risk.energy then
             stall = "energy"
         end
+
+        local excess = nil
+        if snap.excess.metal and snap.excess.energy then
+            excess = "metal+energy"
+        elseif snap.excess.metal then
+            excess = "metal"
+        elseif snap.excess.energy then
+            excess = "energy"
+        end
+
+        local line = string.format(
+            "M: %s/%s (+%s/-%s) E: %s/%s (+%s/-%s) | stall: %s",
+            formatNumber(snap.metal.current), formatNumber(snap.metal.storage),
+            formatNumber(snap.metal.income), formatNumber(snap.metal.expense),
+            formatNumber(snap.energy.current), formatNumber(snap.energy.storage),
+            formatNumber(snap.energy.income), formatNumber(snap.energy.expense),
+            stall
+        )
+        if excess then
+            line = line .. " | EXCESS: " .. excess
+        end
         return {
             type = "text",
-            text = string.format(
-                "M: %s/%s (+%s/-%s) E: %s/%s (+%s/-%s) | stall: %s",
-                formatNumber(snap.metal.current), formatNumber(snap.metal.storage),
-                formatNumber(snap.metal.income), formatNumber(snap.metal.expense),
-                formatNumber(snap.energy.current), formatNumber(snap.energy.storage),
-                formatNumber(snap.energy.income), formatNumber(snap.energy.expense),
-                stall
-            ),
+            text = line,
+        }
+
+    elseif toolName == "economy:desc" then
+        return {
+            type = "text",
+            text = "Economy tracks metal and energy: current, storage, income, expense, stall risk, and excess. " ..
+                   "Stall risk means you're about to run out — cut spending or boost income. " ..
+                   "EXCESS means storage is >90% full and income exceeds expense — you're wasting resources, build more units or expand. " ..
+                   "Use economy:history for trends over time to see if your economy is growing or shrinking. " ..
+                   "Enable the HUD overlay for automatic economy awareness every inference cycle.",
         }
 
     elseif toolName == "economy:history" then
@@ -184,6 +217,11 @@ function widget:Initialize()
             {
                 name = "economy:hud",
                 description = "Compact one-line economy summary for HUD overlay.",
+                inputSchema = { type = "object" },
+            },
+            {
+                name = "economy:desc",
+                description = "Usage guide for economy tools.",
                 inputSchema = { type = "object" },
             },
             {

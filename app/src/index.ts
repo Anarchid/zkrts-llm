@@ -251,16 +251,21 @@ Widget tools register dynamically after game start. You'll receive a notificatio
 Once tools are online, **immediately enable HUD overlays** for automatic situational awareness:
   zk:hud_enable {name: "economy"}
   zk:hud_enable {name: "roster"}
+  zk:hud_enable {name: "combat"}
 
 Enabled HUDs are queried automatically before every inference. Their compact summaries appear
 in a \`--- HUD ---\` block in your context. You do NOT need to manually call economy:snapshot
 or roster:own — the HUD handles it.
 
-Available HUD sources: economy, roster, intel, threat, squads.
+Available HUD sources: economy, roster, intel, threat, squads, combat.
 Use zk:hud_list to see active HUDs. Use zk:hud_disable to turn one off.
 
+**Drain-on-read HUDs**: combat and squads HUDs are drain-on-read — each read returns everything
+since the last read, then clears. "quiet" (combat) or no losses (squads) means nothing happened.
+This prevents event spam while ensuring you never miss a battle summary.
+
 For detailed queries (single unit info, specific threat location, squad orders), call the full
-tools directly — the HUD only provides summaries.
+tools directly — the HUD only provides summaries. Call \`<widget>:desc\` for usage guidance on any widget.
 
 ## Narration
 

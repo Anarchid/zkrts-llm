@@ -86,7 +86,7 @@ local function getUnitInfo(unitID)
     if not defID then return nil end
     local def = UnitDefs[defID]
     if not def then return nil end
-    local hp, maxHp = Spring.GetUnitHealth(unitID)
+    local hp, maxHp, _, _, buildProgress = Spring.GetUnitHealth(unitID)
     local x, y, z = Spring.GetUnitPosition(unitID)
     return {
         id = unitID,
@@ -96,18 +96,23 @@ local function getUnitInfo(unitID)
         role = classifyUnit(defID),
         hp = hp,
         maxHp = maxHp,
+        buildProgress = buildProgress or 1.0,
         x = x, y = y, z = z,
         metalCost = def.metalCost,
     }
 end
 
 local function formatUnit(info)
-    return string.format(
-        '{"id":%d,"name":"%s","role":"%s","hp":%.0f,"maxHp":%.0f,"x":%.0f,"z":%.0f}',
+    local base = string.format(
+        '{"id":%d,"name":"%s","role":"%s","hp":%.0f,"maxHp":%.0f,"x":%.0f,"z":%.0f',
         info.id, info.name, info.role,
         info.hp or 0, info.maxHp or 0,
         info.x or 0, info.z or 0
     )
+    if info.buildProgress < 1.0 then
+        base = base .. string.format(',"building":true,"buildPct":%.0f', info.buildProgress * 100)
+    end
+    return base .. "}"
 end
 
 --------------------------------------------------------------------------------
@@ -142,15 +147,19 @@ local function handleToolCall(toolName, args)
         }
 
     elseif toolName == "roster:hud" then
-        -- Compact summary: count by role
+        -- Compact summary: count by role, separate building units
         local counts = {}
         local total = 0
+        local building = 0
         for unitID, entry in pairs(ownUnits) do
             local info = getUnitInfo(unitID)
             if info then
                 local role = info.role
                 counts[role] = (counts[role] or 0) + 1
                 total = total + 1
+                if info.buildProgress < 1.0 then
+                    building = building + 1
+                end
             end
         end
         local parts = {}
@@ -175,9 +184,26 @@ local function handleToolCall(toolName, args)
             end
         end
 
+        local header
+        if building > 0 then
+            header = string.format("Own(%d, %d building)", total, building)
+        else
+            header = string.format("Own(%d)", total)
+        end
+
         return {
             type = "text",
-            text = string.format("Own(%d): %s | Enemies visible: %d", total, table.concat(parts, " "), enemyCount),
+            text = string.format("%s: %s | Enemies visible: %d", header, table.concat(parts, " "), enemyCount),
+        }
+
+    elseif toolName == "roster:desc" then
+        return {
+            type = "text",
+            text = "Roster tracks your own units grouped by role (factory, raider, assault, skirm, riot, arty, aa, con, commander, other). " ..
+                   "Units marked 'building' are still under construction — don't confuse them with damaged units. " ..
+                   "Enemy roster only shows currently visible enemies — not a complete picture. " ..
+                   "Use roster:unit for detailed info on a specific unit including its command queue. " ..
+                   "Enable the HUD overlay for automatic roster awareness every inference cycle.",
         }
 
     elseif toolName == "roster:enemies" then
@@ -220,16 +246,22 @@ local function handleToolCall(toolName, args)
             cmdStrs[#cmdStrs + 1] = string.format('{"id":%d}', cmd.id or 0)
         end
 
+        local buildStr = ""
+        if info.buildProgress < 1.0 then
+            buildStr = string.format(',"building":true,"buildPct":%.0f', info.buildProgress * 100)
+        end
+
         return {
             type = "text",
             text = string.format(
                 '{"id":%d,"name":"%s","humanName":"%s","role":"%s",' ..
                 '"hp":%.0f,"maxHp":%.0f,"x":%.0f,"y":%.0f,"z":%.0f,' ..
-                '"metalCost":%.0f,"commands":[%s]}',
+                '"metalCost":%.0f%s,"commands":[%s]}',
                 info.id, info.name, info.humanName or "", info.role,
                 info.hp or 0, info.maxHp or 0,
                 info.x or 0, info.y or 0, info.z or 0,
                 info.metalCost or 0,
+                buildStr,
                 table.concat(cmdStrs, ",")
             ),
         }
@@ -270,6 +302,11 @@ function widget:Initialize()
             {
                 name = "roster:hud",
                 description = "Compact one-line roster summary for HUD overlay.",
+                inputSchema = { type = "object" },
+            },
+            {
+                name = "roster:desc",
+                description = "Usage guide for roster tools.",
                 inputSchema = { type = "object" },
             },
             {

@@ -19,7 +19,7 @@ end
 -- State
 --------------------------------------------------------------------------------
 
-local squads = {}          -- id -> { name, units = {unitID -> true}, created }
+local squads = {}          -- id -> { name, units = {unitID -> true}, created, lostSinceLastQuery = {defName -> count} }
 local nextSquadID = 1
 
 --------------------------------------------------------------------------------
@@ -49,6 +49,21 @@ local COMMAND_MAP = {
 -- Helpers
 --------------------------------------------------------------------------------
 
+local function getSquadHealthPool(squad)
+    local current = 0
+    local max = 0
+    for unitID, _ in pairs(squad.units) do
+        if Spring.ValidUnitID(unitID) and not Spring.GetUnitIsDead(unitID) then
+            local hp, maxHp = Spring.GetUnitHealth(unitID)
+            if hp and maxHp then
+                current = current + hp
+                max = max + maxHp
+            end
+        end
+    end
+    return current, max
+end
+
 local function squadToJSON(id, squad)
     local aliveUnits = {}
     for unitID, _ in pairs(squad.units) do
@@ -70,9 +85,24 @@ local function squadToJSON(id, squad)
         )
     end
 
+    -- Health pool
+    local hpCur, hpMax = getSquadHealthPool(squad)
+
+    -- Losses since last query
+    local lostParts = {}
+    local losses = squad.lostSinceLastQuery or {}
+    for defName, count in pairs(losses) do
+        lostParts[#lostParts + 1] = string.format('"%s":%d', defName, count)
+    end
+
+    -- Drain losses on list read
+    squad.lostSinceLastQuery = {}
+
     return string.format(
-        '{"id":%d,"name":"%s","size":%d,"units":[%s]}',
-        id, squad.name, #aliveUnits, table.concat(unitStrs, ",")
+        '{"id":%d,"name":"%s","size":%d,"healthPool":{"current":%.0f,"max":%.0f},"lostSinceLastQuery":{%s},"units":[%s]}',
+        id, squad.name, #aliveUnits, hpCur, hpMax,
+        table.concat(lostParts, ","),
+        table.concat(unitStrs, ",")
     )
 end
 
@@ -113,6 +143,7 @@ local function handleToolCall(toolName, args)
             name = name,
             units = units,
             created = Spring.GetGameFrame(),
+            lostSinceLastQuery = {},
         }
 
         return {
@@ -121,8 +152,9 @@ local function handleToolCall(toolName, args)
         }
 
     elseif toolName == "squad:hud" then
-        -- Compact summary: squad names with sizes
+        -- Compact summary with health pool; drain-on-read losses
         local parts = {}
+        local lossParts = {}
         for id, squad in pairs(squads) do
             -- Count alive units
             local alive = 0
@@ -132,10 +164,21 @@ local function handleToolCall(toolName, args)
                 end
             end
             if alive > 0 then
-                parts[#parts + 1] = string.format("%s(%d)", squad.name, alive)
+                local hpCur, hpMax = getSquadHealthPool(squad)
+                parts[#parts + 1] = string.format("%s(%d hp:%.0f/%.0f)", squad.name, alive, hpCur, hpMax)
             end
+            -- Collect losses
+            local losses = squad.lostSinceLastQuery or {}
+            for defName, count in pairs(losses) do
+                lossParts[#lossParts + 1] = string.format("%dx %s from %s", count, defName, squad.name)
+            end
+            -- Drain losses
+            squad.lostSinceLastQuery = {}
         end
         local text = #parts > 0 and ("Squads: " .. table.concat(parts, " ")) or "Squads: none"
+        if #lossParts > 0 then
+            text = text .. " | LOST: " .. table.concat(lossParts, ", ")
+        end
         return { type = "text", text = text }
 
     elseif toolName == "squad:list" then
@@ -241,6 +284,16 @@ local function handleToolCall(toolName, args)
         }
     end
 
+    elseif toolName == "squad:desc" then
+        return {
+            type = "text",
+            text = "Squads are persistent named unit groups. Create squads to organize your army (e.g. 'alpha' for raiders, 'bravo' for assault). " ..
+                   "Squads track health pools (total current/max HP) and casualties since last query (drain-on-read). " ..
+                   "Dead units are automatically removed. Use squad:order to issue commands to all units in a squad at once. " ..
+                   "The HUD overlay shows squad sizes, health, and recent losses every inference cycle.",
+        }
+    end
+
     return { type = "text", text = '{"error":"unknown tool"}' }
 end
 
@@ -321,6 +374,11 @@ function widget:Initialize()
                 },
             },
             {
+                name = "squad:desc",
+                description = "Usage guide for squad tools.",
+                inputSchema = { type = "object" },
+            },
+            {
                 name = "squad:order",
                 description = "Issue a command to all units in a squad. Commands: move, patrol, fight, attack, guard, stop, wait.",
                 inputSchema = {
@@ -342,9 +400,19 @@ function widget:Initialize()
     end
 end
 
--- Auto-remove dead units from all squads
+-- Auto-remove dead units from all squads, track losses
 function widget:UnitDestroyed(unitID, unitDefID, unitTeam)
+    local defName = nil
+    if unitDefID and UnitDefs[unitDefID] then
+        defName = UnitDefs[unitDefID].name
+    end
     for _, squad in pairs(squads) do
-        squad.units[unitID] = nil
+        if squad.units[unitID] then
+            squad.units[unitID] = nil
+            if defName then
+                squad.lostSinceLastQuery = squad.lostSinceLastQuery or {}
+                squad.lostSinceLastQuery[defName] = (squad.lostSinceLastQuery[defName] or 0) + 1
+            end
+        end
     end
 end
