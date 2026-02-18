@@ -639,11 +639,9 @@ fn resolve_unit_name(cb: &EngineCallbacks, unit_id: i32) -> Option<String> {
     }
     let def_id = cb.unit_get_def(unit_id);
     if def_id < 0 {
-        cb.log(&format!("[SAI enrich] unit_get_def({}) returned {}", unit_id, def_id));
         return None;
     }
     let name = cb.unit_def_get_name(def_id);
-    cb.log(&format!("[SAI enrich] unit {} -> def {} -> {:?}", unit_id, def_id, name));
     name
 }
 

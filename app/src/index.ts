@@ -53,14 +53,14 @@ const providerConfigs = {
     model: 'claude-sonnet-4-5-20250929',
     createAdapter: (): ProviderAdapter =>
       new AnthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! }),
-    formatter: undefined as PrefillFormatter | undefined,
+    formatter: new NativeFormatter() as PrefillFormatter,
   },
   haiku: {
     envKey: 'ANTHROPIC_API_KEY',
     model: 'claude-haiku-4-5-20251001',
     createAdapter: (): ProviderAdapter =>
       new AnthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! }),
-    formatter: undefined as PrefillFormatter | undefined,
+    formatter: new NativeFormatter() as PrefillFormatter,
   },
   groq: {
     envKey: 'GROQ_API_KEY',
@@ -213,7 +213,7 @@ Defense:
 - \`turretheavylaser\` — Stinger (medium laser turret)
 
 **Opening pattern** (your first factory is FREE and instant via "facplop"):
-1. Place \`factorycloak\` near your commander — use the commander's position from its unit_finished event as x/z. Example: \`{"type":"build","unit_id":CMD_ID,"build_def_name":"factorycloak","x":CMD_X,"z":CMD_Z,"queue":false}\`. It's placed instantly at no cost!
+1. Place \`factorycloak\` near your commander — use the commander's position from its unit_finished event as x/z. Example: \`{"type":"build","unit_id":CMD_ID,"build_def_name":"factorycloak","x":CMD_X,"z":CMD_Z,"queue":false}\`. It's placed instantly at no cost, so feel free to add the following orders to the queue at once.
 2. The new factory sends a \`unit_finished\` event with its unit ID. Use that ID to queue production: \`cloakcon\` then 2-3 \`cloakraid\` (omit x/y/z for factory production).
 3. While factory produces, use your commander to build 3 \`staticmex\` on nearby metal spots (use x/z from the metal_spots data in the init event).
 4. Build 2-3 \`energysolar\` to balance energy

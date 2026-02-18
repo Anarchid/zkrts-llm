@@ -153,6 +153,7 @@ export class WakeModule implements Module {
       return {
         success: true,
         data: `Waking immediately — matching event(s) arrived during last inference. Will then sleep on: [${input.events.join(', ')}] or after ${timeout_s}s.`,
+        endTurn: true,
       };
     }
 
@@ -171,6 +172,7 @@ export class WakeModule implements Module {
     return {
       success: true,
       data: `Sleeping. Will wake on: [${input.events.join(', ')}] or after ${timeout_s}s.`,
+      endTurn: true,
     };
   }
 
